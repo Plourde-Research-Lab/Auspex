@@ -559,15 +559,20 @@ class QubitExpFactory(object):
                     name, meas_or_control, prop = par["target"].split()
                     qubit = qubits[name]
 
-                    # We should allow for either mixed up signals or direct synthesis
-                    if 'generator' in qubit[meas_or_control]:
+                    # If sweeping frequency, we should allow for either mixed up signals or direct synthesis.
+                    # Sweeping power is always through the AWG channels. TODO: other cases?
+                    if 'generator' in qubit[meas_or_control] and prop.lower() == 'frequency':
                         name = qubit[meas_or_control]['generator']
                         instr = experiment._instruments[name]
-                        method_name = 'set_' + prop.lower()
+                        method_name = 'set_frequency'
+                        chan = ''
+                    elif prop.lower() in ['amplitude', 'power']:
+                        instr_name, chan = experiment.settings['qubits'][name][meas_or_control]['AWG'].split()
+                        instr = experiment._instruments[instr_name]
+                        method_name = "set_amplitude_pair"
                     else:
-                        name, chan = experiment.settings['qubits'][meas_or_control]['AWG']
-                        instr = experiment._instruments[name]
-                        method_name = "set_{}_{}".format(chan, prop.lower())
+                        #other special cases?
+                        raise ValueError("Qubit sweep not available. Please specify the sweep instrument directly.")
 
                 elif target_info[0] in experiment._instruments:
                     # We are sweeping an instrument directly
@@ -586,7 +591,10 @@ class QubitExpFactory(object):
                     points = np.arange(par['start'], par['stop'], par['step'])
 
                 if hasattr(instr, method_name):
-                    param.assign_method(getattr(instr, method_name)) # Couple the parameter to the instrument
+                    if len(chan) > 1:
+                        param.assign_method(lambda x: getattr(instr, method_name)(chan, x))
+                    else:
+                        param.assign_method(getattr(instr, method_name)) # Couple the parameter to the instrument
                     experiment.add_sweep(param, points) # Create the requested sweep on this parameter
                 else:
                     raise ValueError("The instrument {} has no method set_{}".format(name, par['type'].lower()))

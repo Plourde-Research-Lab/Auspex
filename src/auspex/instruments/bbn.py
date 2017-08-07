@@ -256,6 +256,11 @@ class APS2(Instrument, metaclass=MakeSettersGetters):
                 except AttributeError:
                     pass
 
+    def set_amplitude_pair(self, pair, value):
+        pair_ind = {'12':0, '34':1}
+        self.set_amplitude(2*pair_ind[pair], value)
+        self.set_amplitude(2*pair_ind[pair] + 1, value)
+
     def load_waveform(self, channel, data):
         if channel not in (1, 2):
             raise ValueError("Cannot load APS waveform data to channel {} on {} -- must be 1 or 2.".format(channe, self.name))
