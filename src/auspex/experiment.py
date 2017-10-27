@@ -8,6 +8,7 @@
 
 import inspect
 import time
+import copy
 import itertools
 import logging
 import asyncio
@@ -27,8 +28,7 @@ from auspex.instruments.instrument import Instrument
 from auspex.parameter import ParameterGroup, FloatParameter, IntParameter, Parameter
 from auspex.sweep import Sweeper
 from auspex.stream import DataStream, DataAxis, SweepAxis, DataStreamDescriptor, InputConnector, OutputConnector
-from auspex.filters.plot import Plotter, XYPlotter, MeshPlotter, ManualPlotter
-from auspex.filters.io import WriteToHDF5, DataBuffer
+from auspex.filters import Plotter, XYPlotter, MeshPlotter, ManualPlotter, WriteToHDF5, DataBuffer, Filter
 from auspex.log import logger
 import auspex.globals
 
@@ -192,6 +192,8 @@ class Experiment(metaclass=MetaExperiment):
         # we might push additional plots after run_sweeps is complete.
         self.leave_plot_server_open = False
 
+        self.keep_instruments_connected = False
+
         # Also keep references to all of the plot filters
         self.plotters = [] # Standard pipeline plotters using streams
         self.extra_plotters = [] # Plotters using streams, but not the pipeline
@@ -212,6 +214,9 @@ class Experiment(metaclass=MetaExperiment):
         # indicates whether the instruments are already connected
         self.instrs_connected = False
 
+        # indicates whether this is the first (or only) experiment in a series (e.g. for pulse calibrations)
+        self.first_exp = True
+
         # Things we can't metaclass
         self.output_connectors = {}
         for oc in self._output_connectors.keys():
@@ -222,12 +227,26 @@ class Experiment(metaclass=MetaExperiment):
             setattr(self, oc, a)
 
         # Some instruments don't clean up well after themselves, reconstruct them on a
-        # per instance basis
+        # per instance basis. These instruments contain a wide variety of complex behaviors
+        # and rely on other classes and data structures, so we avoid copying them and
+        # run through the constructor instead.
+        self._instruments_instance = {}
         for n in self._instruments.keys():
             new_cls = type(self._instruments[n])
             new_inst = new_cls(resource_name=self._instruments[n].resource_name, name=self._instruments[n].name)
             setattr(self, n, new_inst)
-            self._instruments[n] = new_inst
+            self._instruments_instance[n] = new_inst
+        self._instruments = self._instruments_instance
+
+        # We don't want to add parameters to the base class, so do the same here.
+        # These aren't very complicated objects, so we'll throw caution to the wind and
+        # try copying them directly.
+        self._parameters_instance = {}
+        for n, v in self._parameters.items():
+            new_inst = copy.deepcopy(v)
+            setattr(self, n, new_inst)
+            self._parameters_instance[n] = new_inst
+        self._parameters = self._parameters_instance
 
         # Create the asyncio measurement loop
         self.loop = asyncio.get_event_loop()
@@ -335,12 +354,12 @@ class Experiment(metaclass=MetaExperiment):
                 for oc in self.output_connectors.values():
                     # Obtain the lists of values for any fixed
                     # DataAxes and append them to them to the sweep_values
-                    # in preperation for finding all combinations. 
+                    # in preperation for finding all combinations.
                     vals = [a for a in oc.descriptor.data_axis_values()]
                     if sweep_values:
                         vals  = [[v] for v in sweep_values] + vals
 
-                    # Find all coordinate tuples and update the list of 
+                    # Find all coordinate tuples and update the list of
                     # tuples that the experiment has probed.
                     nested_list    = list(itertools.product(*vals))
                     flattened_list = [tuple((val for sublist in line for val in sublist)) for line in nested_list]
@@ -360,20 +379,34 @@ class Experiment(metaclass=MetaExperiment):
             if self.progressbar is not None:
                 self.progressbar.update()
 
+            # Finish up, checking to see whether we've received all of our data
             if self.sweeper.done():
-                logger.debug("Sweeper has finished.")
+                sleep_time = 0
+                while not self.filters_finished():
+                    await asyncio.sleep(1)
+                    sleep_time += 1
+                    if sleep_time == 5:
+                        logger.info("Still waiting for filters to finish. Did the experiment produce the expected amount of data?")
+                        for n in self.nodes:
+                            if isinstance(n, Filter):
+                                logger.info("  {} done: {}".format(n, n.finished_processing))
+                        print({n: n.finished_processing for n in self.nodes if isinstance(n, Filter)})
+
+                    if sleep_time >= 20:
+                        logger.warning("Filters not stopped after 20 seconds, bailing.")
+                        break
                 await self.declare_done()
                 break
 
+    def filters_finished(self):
+        return all([n.finished_processing for n in self.nodes if isinstance(n, Filter)])
+
     def connect_instruments(self):
         # Connect the instruments to their resources
-        for instrument in self._instruments.values():
-            instrument.connect()
-
-        # Initialize the instruments and stream
-        self.init_instruments()
-
-        self.instrs_connected = True
+        if not self.instrs_connected:
+            for instrument in self._instruments.values():
+                instrument.connect()
+            self.instrs_connected = True
 
     def disconnect_instruments(self):
         # Connect the instruments to their resources
@@ -390,9 +423,9 @@ class Experiment(metaclass=MetaExperiment):
         if self.progressbar is not None:
             self.progressbar.reset()
 
-        #connect all instruments
-        if not self.instrs_connected:
-            self.connect_instruments()
+        #Make sure we have axes.
+        if not any([oc.descriptor.axes for oc in self.output_connectors.values()]):
+            logger.warning("There do not appear to be any axes defined for this experiment!")
 
         # Go find any writers
         self.writers = [n for n in self.nodes if isinstance(n, WriteToHDF5)]
@@ -416,8 +449,12 @@ class Experiment(metaclass=MetaExperiment):
                 w.file = wrs[0].file
                 w.filename.value = wrs[0].filename.value
 
+        # Remove the nodes with 0 dimension
+        self.nodes = [n for n in self.nodes if not(hasattr(n, 'input_connectors') and        n.input_connectors['sink'].descriptor.num_dims()==0)]
+
         # Go and find any plotters
-        self.plotters = [n for n in self.nodes if isinstance(n, (Plotter, MeshPlotter, XYPlotter))]
+        self.standard_plotters = [n for n in self.nodes if isinstance(n, (Plotter, MeshPlotter, XYPlotter))]
+        self.plotters = copy.copy(self.standard_plotters)
 
         # We might have some additional plotters that are separate from
         # The asyncio filter pipeline
@@ -434,40 +471,14 @@ class Experiment(metaclass=MetaExperiment):
             if hasattr(n, 'final_init'):
                 n.final_init()
 
-        # Launch the bokeh-server if necessary.
+        # Launch plot servers.
         if len(self.plotters) > 0:
-            logger.debug("Found %d plotters", len(self.plotters))
-
-            from .plotting import MatplotServerThread
-
-            plot_desc = {p.name: p.desc() for p in self.plotters}
-            self.plot_server = MatplotServerThread(plot_desc)
-            for plotter in self.plotters:
-                plotter.plot_server = self.plot_server
-            time.sleep(0.5)
-            # Kill a previous plotter if desired.
-            if auspex.globals.single_plotter_mode and auspex.globals.last_plotter_process:
-                pro = auspex.globals.last_plotter_process
-                if hasattr(os, 'setsid'): # Doesn't exist on windows
-                    try:
-                        os.kill(pro.pid, 0) # Raises an error if the PID doesn't exist
-                        os.killpg(os.getpgid(pro.pid), signal.SIGTERM) # Proceed to kill process group
-                    except OSError:
-                        logger.debug("No plotter to kill.")
-                else:
-                    try:
-                        pro.kill()
-                    except:
-                        logger.debug("No plotter to kill.")
-
-            client_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),"matplotlib-client.py")
-            if hasattr(os, 'setsid'):
-                auspex.globals.last_plotter_process = subprocess.Popen(['python', client_path, 'localhost'],
-                                                                    env=os.environ.copy(), preexec_fn=os.setsid)
-            else:
-                auspex.globals.last_plotter_process = subprocess.Popen(['python', client_path, 'localhost'],
-                                                                    env=os.environ.copy())
-            time.sleep(1)
+            self.init_plot_servers()
+        time.sleep(1)
+        #connect all instruments
+        self.connect_instruments()
+        #initialize instruments
+        self.init_instruments()
 
         def catch_ctrl_c(signum, frame):
             logger.info("Caught SIGINT. Shutting down.")
@@ -500,7 +511,6 @@ class Experiment(metaclass=MetaExperiment):
 
     def shutdown(self):
         logger.debug("Shutting Down!")
-
         for f in self.files:
             try:
                 logger.debug("Closing %s", f)
@@ -509,14 +519,17 @@ class Experiment(metaclass=MetaExperiment):
             except:
                 logger.debug("File probably already closed...")
 
-        try:
-            if len(self.plotters) > 0 and not self.leave_plot_server_open:
-                self.plot_server.stop()
-        except:
-            logger.warning("Could not stop plot server gracefully...")
+        if hasattr(self, 'plot_server'):
+            try:
+                if len(self.plotters) > 0: #and not self.leave_plot_server_open:
+                    self.plot_server.stop()
+            except:
+                logger.warning("Could not stop plot server gracefully...")
 
         self.shutdown_instruments()
-        self.disconnect_instruments()
+
+        if not self.keep_instruments_connected:
+            self.disconnect_instruments()
 
     def add_axis(self, axis):
         for oc in self.output_connectors.values():
@@ -535,6 +548,23 @@ class Experiment(metaclass=MetaExperiment):
             parameters.value = sweep_list[0]
         return ax
 
+    def clear_sweeps(self):
+        """Delete all sweeps present in this experiment."""
+        logger.debug("Removing all axes from experiment.")
+        self.sweeper.axes = []
+        for oc in self.output_connectors.values():
+            oc.descriptor.axes = []
+
+    def pop_sweep(self, name):
+        """Remove sweep that has a given name."""
+        names = [_.name for _ in self.sweeper.axes]
+        if name not in names:
+            raise KeyError("Could not remove sweep named {}; does not appear to be present.".format(name))
+        self.sweeper.axes = [_ for _ in self.sweeper.axes if _.name != name]
+        for oc in self.output_connectors.values():
+            oc.descriptor.axes = [_ for _ in oc.descriptor.axes if _.name != name]
+        logger.debug("Removed sweep {} from experiment".format(name))
+
     def add_direct_plotter(self, plotter):
         """A plotter that lives outside the filter pipeline, intended for advanced
         use cases when plotting data during refinement."""
@@ -552,3 +582,50 @@ class Experiment(metaclass=MetaExperiment):
 
         stream = self._extra_plots_to_streams[plotter]
         await stream.push_direct(data)
+
+    def init_plot_servers(self):
+        logger.debug("Found %d plotters", len(self.plotters))
+
+        from .plotting import MatplotServerThread
+        plot_desc = {p.name: p.desc() for p in self.standard_plotters}
+        if not hasattr(self, "plot_server"):
+            self.plot_server = MatplotServerThread(plot_desc)
+        if len(self.plotters) > len(self.standard_plotters) and not hasattr(self, "extra_plot_server"):
+            extra_plot_desc = {p.name: p.desc() for p in self.extra_plotters + self.manual_plotters}
+            self.extra_plot_server = MatplotServerThread(extra_plot_desc, status_port = self.plot_server.status_port+2, data_port = self.plot_server.data_port+2)
+        for plotter in self.standard_plotters:
+            plotter.plot_server = self.plot_server
+        for plotter in self.extra_plotters + self.manual_plotters:
+            plotter.plot_server = self.extra_plot_server
+        time.sleep(0.5)
+        # Kill a previous plotter if desired.
+        if auspex.globals.single_plotter_mode and auspex.globals.last_plotter_process:
+            pros = [auspex.globals.last_plotter_process]
+            if (not self.leave_plot_server_open or self.first_exp) and auspex.globals.last_extra_plotter_process:
+                pros += [auspex.globals.last_extra_plotter_process]
+            for pro in pros:
+                if hasattr(os, 'setsid'): # Doesn't exist on windows
+                    try:
+                        os.kill(pro.pid, 0) # Raises an error if the PID doesn't exist
+                        os.killpg(os.getpgid(pro.pid), signal.SIGTERM) # Proceed to kill process group
+                    except OSError:
+                        logger.debug("No plotter to kill.")
+                else:
+                    try:
+                        pro.kill()
+                    except:
+                        logger.debug("No plotter to kill.")
+
+        client_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),"matplotlib-client.py")
+        #if not auspex.globals.last_plotter_process:
+        if hasattr(os, 'setsid'):
+            auspex.globals.last_plotter_process = subprocess.Popen(['python', client_path, 'localhost'],
+                                                                env=os.environ.copy(), preexec_fn=os.setsid)
+        else:
+            auspex.globals.last_plotter_process = subprocess.Popen(['python', client_path, 'localhost'],
+                                                                env=os.environ.copy())
+        if hasattr(self, 'extra_plot_server') and (not auspex.globals.last_extra_plotter_process or not self.leave_plot_server_open or self.first_exp):
+            if hasattr(os, 'setsid'):
+                auspex.globals.last_extra_plotter_process = subprocess.Popen(['python', client_path, 'localhost', str(self.extra_plot_server.status_port), str(self.extra_plot_server.data_port)], env=os.environ.copy(), preexec_fn=os.setsid)
+            else:
+                auspex.globals.last_extra_plotter_process = subprocess.Popen(['python', client_path, 'localhost', str(self.extra_plot_server.status_port), str(self.extra_plot_server.data_port)], env=os.environ.copy())

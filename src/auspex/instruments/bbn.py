@@ -17,9 +17,11 @@ import auspex.globals
 from time import sleep
 from visa import VisaIOError
 import numpy as np
+from copy import deepcopy
 
 # Dirty trick to avoid loading libraries when scraping
 # This code using quince.
+aps2_missing = False
 if auspex.globals.auspex_dummy_mode:
     fake_aps2 = True
 else:
@@ -27,13 +29,13 @@ else:
         import aps2
         fake_aps2 = False
     except:
-        logger.warning("Could not find APS2 python driver.")
         fake_aps2 = True
+        aps2_missing = True
         aps2 = MagicMock()
 
 class DigitalAttenuator(SCPIInstrument):
     """BBN 3 Channel Instrument"""
-
+    instrument_type = "Digital attenuator"
     NUM_CHANNELS = 3
     instrument_type = 'Attenuator'
 
@@ -96,8 +98,8 @@ class DigitalAttenuator(SCPIInstrument):
 
 class SpectrumAnalyzer(SCPIInstrument):
     """BBN USB Spectrum Analyzer"""
-
-    IF_FREQ = 0.0107 # 10.7 MHz IF notch filter
+    instrument_type = "Spectrum analyzer"
+    IF_FREQ = 0.0107e9 # 10.7 MHz IF notch filter
 
     def __init__(self, resource_name=None, *args, **kwargs):
         super(SpectrumAnalyzer, self).__init__(resource_name, *args, **kwargs)
@@ -187,6 +189,9 @@ class APS2(Instrument, metaclass=MakeSettersGetters):
         self.name = name
         self.resource_name = resource_name
 
+        if aps2_missing:
+            logger.warning("Could not load aps2 library")
+
         if fake_aps2:
             self.wrapper = MagicMock()
         else:
@@ -237,7 +242,7 @@ class APS2(Instrument, metaclass=MakeSettersGetters):
 
     def set_all(self, settings_dict, prefix=""):
         # Pop the channel settings
-        settings = settings_dict.copy()
+        settings = deepcopy(settings_dict)
         quad_channels = settings.pop('tx_channels')
         # Call the non-channel commands
         super(APS2, self).set_all(settings)

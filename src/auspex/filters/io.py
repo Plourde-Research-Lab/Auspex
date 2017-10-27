@@ -17,10 +17,12 @@ import numpy as np
 import os.path
 import time
 import re
+import pandas as pd
 from shutil import copyfile
+from ruamel.yaml import YAML
 
 from .filter import Filter
-from auspex.parameter import Parameter, FilenameParameter
+from auspex.parameter import Parameter, FilenameParameter, BoolParameter
 from auspex.stream import InputConnector, OutputConnector
 from auspex.log import logger
 import auspex.config as config
@@ -33,8 +35,10 @@ class WriteToHDF5(Filter):
     sink = InputConnector()
     filename = FilenameParameter()
     groupname = Parameter(default='main')
+    add_date = BoolParameter(default = False)
+    save_settings = BoolParameter(default = True)
 
-    def __init__(self, filename=None, groupname=None, add_date=False, save_settings=False, compress=True, store_tuples=True, **kwargs):
+    def __init__(self, filename=None, groupname=None, add_date=False, save_settings=True, compress=True, store_tuples=True, exp_log=True, **kwargs):
         super(WriteToHDF5, self).__init__(**kwargs)
         self.compress = compress
         if filename:
@@ -48,9 +52,10 @@ class WriteToHDF5(Filter):
         self.create_group = True
         self.up_to_date = False
         self.sink.max_input_streams = 100
-        self.add_date = add_date
-        self.save_settings = save_settings
-        self.quince_parameters = [self.filename, self.groupname]
+        self.add_date.value = add_date
+        self.save_settings.value = save_settings
+        self.exp_log = exp_log
+        self.quince_parameters = [self.filename, self.groupname, self.add_date, self.save_settings]
 
     def final_init(self):
         if not self.filename.value:
@@ -65,12 +70,12 @@ class WriteToHDF5(Filter):
         filename = self.filename.value
         basename, ext = os.path.splitext(filename)
         if ext == "":
-            logger.debug(f"Filename for writer {self.name} does not have an extension -- using default '.h5'")
+            logger.debug("Filename for writer {} does not have an extension -- using default '.h5'".format(self.name))
             ext = ".h5"
 
         dirname = os.path.dirname(os.path.abspath(filename))
 
-        if self.add_date:
+        if self.add_date.value:
             date     = time.strftime("%y%m%d")
             dirname  = os.path.join(dirname, date)
             basename = os.path.join(dirname, os.path.basename(basename))
@@ -104,21 +109,39 @@ class WriteToHDF5(Filter):
         logger.debug("Create new data file: %s." % self.filename.value)
         # Copy current settings to a folder with the file name
         if self.save_settings:
-            self.save_json()
+            # just move copies to a new directory
+            self.save_yaml()
+        if self.exp_log:
+            self.write_to_log()
         return h5py.File(self.filename.value, 'w', libver='latest')
 
-    def save_json(self):
+    def write_to_log(self):
+        """ Record the experiment in a log file """
+        logfile = os.path.join(config.LogDir, "experiment_log.tsv")
+        if os.path.isfile(logfile):
+            lf = pd.read_csv(logfile, sep="\t")
+        else:
+            logger.info("Experiment log file created.")
+            lf = pd.DataFrame(columns = ["Filename", "Date", "Time"])
+        lf = lf.append(pd.DataFrame([[self.filename.value, time.strftime("%y%m%d"), time.strftime("%H:%M:%S")]],columns=["Filename", "Date", "Time"]),ignore_index=True)
+        lf.to_csv(logfile, sep = "\t", index = False)
+
+    def save_yaml(self):
         """ Save a copy of current experiment settings """
         head = os.path.dirname(self.filename.value)
         fulldir = os.path.splitext(self.filename.value)[0]
         if not os.path.exists(fulldir):
             os.makedirs(fulldir)
-            copyfile(config.instrumentLibFile, os.path.join(fulldir, os.path.split(config.instrumentLibFile)[1]))
-            copyfile(config.measurementLibFile, os.path.join(fulldir, os.path.split(config.measurementLibFile)[1]))
-            copyfile(config.sweepLibFile, os.path.join(fulldir, os.path.split(config.sweepLibFile)[1]))
-            copyfile(config.channelLibFile, os.path.join(fulldir, os.path.split(config.channelLibFile)[1]))
+            config.yaml_dump(config.yaml_load(config.configFile), os.path.join(fulldir, os.path.split(config.configFile)[1]), flatten = True)
+
+    def save_yaml_h5(self):
+        """ Save a copy of current experiment settings in the h5 metadata"""
+        header = self.file.create_group("header")
+        # load them dump to get the 'include' information
+        header.attrs['settings'] = config.yaml_dump(config.yaml_load(config.configFile), flatten = True)
 
     async def run(self):
+        self.finished_processing = False
         streams    = self.sink.input_streams
         stream     = streams[0]
 
@@ -151,6 +174,10 @@ class WriteToHDF5(Filter):
             self.group = self.file
 
         self.data_group = self.group.create_group("data")
+
+        # If desired, push experimental metadata into the h5 file
+        if self.save_settings and 'header' not in self.file.keys(): # only save header once for multiple writers
+            self.save_yaml_h5()
 
         # Create datasets for each stream
         dset_for_streams = {}
@@ -343,8 +370,12 @@ class WriteToHDF5(Filter):
                 logger.debug("HDF5: Write index at %d", w_idx)
                 logger.debug("HDF5: %s has written %d points", stream.name, w_idx)
 
+            # If we have gotten all our data and process_data has returned, then we are done!
+            if np.all([v.done() for v in self.input_connectors.values()]):
+                self.finished_processing = True
+
 class DataBuffer(Filter):
-    """Writes data to file."""
+    """Writes data to IO."""
 
     sink = InputConnector()
 
@@ -359,6 +390,7 @@ class DataBuffer(Filter):
         self.w_idxs  = {s: 0 for s in self.sink.input_streams}
 
     async def run(self):
+        self.finished_processing = False
         streams = self.sink.input_streams
 
         for s in streams[1:]:
@@ -420,6 +452,10 @@ class DataBuffer(Filter):
 
                 self.buffers[stream][self.w_idxs[stream]:self.w_idxs[stream]+data.size] = data
                 self.w_idxs[stream] += data.size
+
+            # If we have gotten all our data and process_data has returned, then we are done!
+            if np.all([v.done() for v in self.input_connectors.values()]):
+                self.finished_processing = True
 
     def get_data(self):
         streams = self.sink.input_streams

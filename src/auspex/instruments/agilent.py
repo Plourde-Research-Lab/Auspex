@@ -47,8 +47,8 @@ class Agilent33220A(SCPIInstrument):
 
     #Voltage
     dc_offset = FloatCommand(scpi_string="VOLT:OFFSET")
-    output = Command(get_string="OUTP?", set_string="OUTP {:s}",
-                                value_map = {True: "1", False: "0"})
+    output = Command(get_string="OUTP?", set_string="OUTP {:s}", value_map = {True: "1", False: "0"})
+    polarity = Command(get_string="OUTP:POL?", set_string="OUTP:POL {:s}", value_map = {1 : "NORM", -1 : "INV"})
     auto_range = Command(scpi_string="VOLTage:RANGe:AUTO", value_map={True: "1", False: "0"})
     load_resistance = FloatCommand(scpi_string="OUTPut:LOAD")
     amplitude = FloatCommand(scpi_string="VOLT")
@@ -72,9 +72,16 @@ class Agilent33220A(SCPIInstrument):
 
     # Pulse characteristics
     pulse_width = FloatCommand(scpi_string="FUNCtion:PULSe:WIDTh")
+    pulse_period = FloatCommand(scpi_string="PULSe:PERiod")
+    pulse_edge = FloatCommand(scpi_string="FUNCtion:PULSe:TRANsition")
+    pulse_dcyc = IntCommand(scpi_string="FUNCtion:PULSe:DCYCle")
+
+    ramp_symmetry = FloatCommand(scpi_string="FUNCtion:RAMP:SYMMetry")
 
     def trigger(self):
         self.interface.write("*TRG")
+
+
 
 class Agilent34970A(SCPIInstrument):
     """Agilent 34970A MUX"""
@@ -357,7 +364,7 @@ class AgilentE8363C(SCPIInstrument):
     frequency_stop     = FloatCommand(scpi_string=":SENSe:FREQuency:STOP")
     sweep_num_points   = IntCommand(scpi_string=":SENSe:SWEep:POINts")
     averaging_factor   = IntCommand(scpi_string=":SENSe1:AVERage:COUNt")
-    averaging_enable   = StringCommand(get_string=":SENSe1:AVERage:STATe?", set_string=":SENSe1:AVERage:STATe {:c}", value_map={False:"0", True:"1"})
+    averaging_enable   = StringCommand(get_string=":SENSe1:AVERage:STATe?", set_string=":SENSe1:AVERage:STATe {:s}", value_map={False:"0", True:"1"})
     averaging_complete = StringCommand(get_string=":STATus:OPERation:AVERaging1:CONDition?", value_map={False:"+0", True:"+2"})
     if_bandwidth       = FloatCommand(scpi_string=":SENSe1:BANDwidth")
     sweep_time         = FloatCommand(get_string=":SENSe:SWEep:TIME?")
