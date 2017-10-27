@@ -1,0 +1,99 @@
+BBNAPS1:
+  type: APS2
+  master: true
+  slave_trig: 12m4
+  address: 192.168.2.2
+  seq_file: thing.h5
+  trigger_interval: 10.0e-06
+  trigger-source: Internal
+  delay: 0.0
+  tx_channels:
+    '12':
+      phase_skew: -11.73
+      amp_factor: 0.898
+      '1':
+        enabled: true
+        offset: 0.1
+        amplitude: 0.9
+      '2':
+        enabled: true
+        offset: 0.02
+        amplitude: 0.8
+  markers:
+    12m1:
+      delay: -5.0e-08
+    12m2:
+      delay: 0.0
+    12m3:
+      delay: 0.0
+    12m4:
+      delay: 0.0
+
+BBNAPS2:
+  type: APS2
+  master: false
+  address: 192.168.2.4
+  seq_file: thing2.h5
+  trigger_interval: 5.0e-06
+  trigger-source: External
+  delay: 0.0
+  tx_channels:
+    '12':
+      phase_skew: 10
+      amp_factor: 0.898
+      '1':
+        enabled: true
+        offset: 0.1
+        amplitude: 0.9
+      '2':
+        enabled: true
+        offset: 0.02
+        amplitude: 0.8
+  markers:
+    12m1:
+      delay: -5.0e-08
+    12m2:
+      delay: 0.0
+    12m3:
+      delay: 0.0
+    12m4:
+      delay: 0.0
+
+Alazar:
+  type: AlazarATS9870
+  address: 0
+  acquireMode: averager
+  bandwidth: full
+  clockType: Ext
+  delay: 0
+  enabled: true
+  label: Alazar
+  nbr_samples: 2048
+  nbr_segments: 1
+  nbr_waveforms: 1
+  nbr_round_robins: 1000
+  sampling_rate: 500e6
+  triggerCoupling: DC
+  triggerLevel: 100
+  triggerSlope: rising
+  triggerSource: Ext
+  verticalCoupling: AC
+  verticalOffset: 0
+  verticalScale: 2
+
+HMC1:
+  type: HittiteHMCT2100
+  address: ASRL7::INSTR
+  power: 18
+
+MXG:
+  type: AgilentN5183A
+  address: HS9004A-009-2
+  power: -10
+
+DA:
+  type: DigitalAttenuator
+  address: COM5
+  ch1_attenuation: 0
+  ch2_attenuation: 0
+  ch3_attenuation: 0

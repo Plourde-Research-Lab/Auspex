@@ -14,8 +14,8 @@ Demod-q1:
 Int-q1:
   type: KernelIntegrator
   source: Demod-q1
-  box_car_start: 5.0e-07
-  box_car_stop: 9.0e-07
+  box_car_start: 1e-6
+  box_car_stop: 4e-6
 
 avg-q1:
   type: Averager
