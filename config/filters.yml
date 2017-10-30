@@ -1,0 +1,47 @@
+Stream-q1:
+  type: AlazarStreamSelector
+  source: Alazar
+  channel: 1
+
+Demod-q1:
+  type: Channelizer
+  source: Stream-q1
+  decimation_factor: 16
+  frequency: 10000000.0
+  bandwidth: 5000000.0
+
+Int-q1:
+  type: KernelIntegrator
+  source: Demod-q1
+  box_car_start: .5e-6
+  box_car_stop: 4.5e-6
+
+avg-q1:
+  type: Averager
+  source: Int-q1
+  axis: round_robins
+
+Plot-q1-Int:
+  type: Plotter
+  source: avg-q1 final_average
+
+# Plot-q1-Int:
+#   type: Plotter
+#   source: Int-q1
+#   plot_mode: quad
+
+
+Plot-q1-Raw:
+  type: Plotter
+  source: Stream-q1
+  plot_mode: real
+
+Plot-q1-Demod:
+  type: Plotter
+  source: Demod-q1
+
+# H5Write:
+#   type: WriteToHDF5
+#   source: Int-q1
+#   add_data: True
+#   groupname: Test
