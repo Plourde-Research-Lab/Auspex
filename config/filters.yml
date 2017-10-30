@@ -25,12 +25,6 @@ Plot-q1-Int:
   type: Plotter
   source: avg-q1 final_average
 
-# Plot-q1-Int:
-#   type: Plotter
-#   source: Int-q1
-#   plot_mode: quad
-
-
 Plot-q1-Raw:
   type: Plotter
   source: Stream-q1
@@ -39,9 +33,3 @@ Plot-q1-Raw:
 Plot-q1-Demod:
   type: Plotter
   source: Demod-q1
-
-# H5Write:
-#   type: WriteToHDF5
-#   source: Int-q1
-#   add_data: True
-#   groupname: Test

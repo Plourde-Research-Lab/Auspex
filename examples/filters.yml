@@ -1,14 +1,8 @@
 q1-RawSS:
-  type: X6StreamSelector
-  source: X6-1
+  type: AlazarStreamSelector
+  source: Alazar
   stream_type: Raw
   channel: '1'
-
-q1-DemodSS:
-  type: X6StreamSelector
-  source: X6-1
-  stream_type: Demodulated
-  channel: "1"
 
 Demod-q1:
   type: Channelizer
