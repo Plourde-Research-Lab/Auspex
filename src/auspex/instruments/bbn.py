@@ -6,7 +6,7 @@
 #
 #    http://www.apache.org/licenses/LICENSE-2.0
 
-__all__ = ['APS2', 'DigitalAttenuator', 'SpectrumAnalyzer']
+__all__ = ['APS', 'APS2', 'DigitalAttenuator', 'SpectrumAnalyzer']
 
 from .instrument import Instrument, SCPIInstrument, VisaInterface, MetaInstrument
 from auspex.log import logger
@@ -22,8 +22,11 @@ from copy import deepcopy
 # Dirty trick to avoid loading libraries when scraping
 # This code using quince.
 aps2_missing = False
+aps1_missing = False
+
 if auspex.globals.auspex_dummy_mode:
     fake_aps2 = True
+    fake_aps1 = True
 else:
     try:
         import aps2
@@ -32,6 +35,14 @@ else:
         fake_aps2 = True
         aps2_missing = True
         aps2 = MagicMock()
+        
+    try:
+        import APS as libaps
+        fake_aps1 = False
+    except:
+        fake_aps1 = True
+        aps1_missing = True
+        APS = MagicMock()
 
 class DigitalAttenuator(SCPIInstrument):
     """BBN 3 Channel Instrument"""
@@ -270,7 +281,7 @@ class APS2(Instrument, metaclass=MakeSettersGetters):
 
     def load_waveform(self, channel, data):
         if channel not in (1, 2):
-            raise ValueError("Cannot load APS waveform data to channel {} on {} -- must be 1 or 2.".format(channe, self.name))
+            raise ValueError("Cannot load APS waveform data to channel {} on {} -- must be 1 or 2.".format(channel, self.name))
         try:
             if data.dtype == np.int:
                 self.wrapper.set_waveform_int(channel-1, data.astype(np.int16))
@@ -346,3 +357,222 @@ class APS2(Instrument, metaclass=MakeSettersGetters):
     @property
     def fpga_temperature(self):
         return self.wrapper.get_fpga_temperature()
+
+class APS(Instrument, metaclass=MakeSettersGetters):
+    """BBN APS1/DACII"""
+    instrument_type = "AWG"
+
+    yaml_template = """
+        APS-Name:
+          type: APS1             # Used by QGL and Auspex. QGL assumes XXXPattern for the pattern generator
+          enabled: true            # true or false, optional
+          master: true             # true or false
+          slave_trig:              # name of marker below, optional, i.e. 12m4. Used by QGL.
+          address:                 # DAC Serial
+          trigger_interval: 0.0    # (s)
+          trigger_source: External # Internal, External, Software, or System
+          seq_file: test.h5        # optional sequence file
+          tx_channels:             # All transmit channels
+            '12':                  # Quadrature channel name (string)
+              phase_skew: 0.0      # (deg) - Used by QGL
+              amp_factor: 1.0      # Used by QGL
+              delay: 0.0           # (s) - Used by QGL
+              '1':
+                enabled: true
+                offset: 0.0
+                amplitude: 1.0
+              '2':
+                enabled: true
+                offset: 0.0
+                amplitude: 1.0
+            '34':                  # Quadrature channel name (string)
+              phase_skew: 0.0      # (deg) - Used by QGL
+              amp_factor: 1.0      # Used by QGL
+              delay: 0.0           # (s) - Used by QGL
+              '3':
+                enabled: true
+                offset: 0.0
+                amplitude: 1.0
+              '4':
+                enabled: true
+                offset: 0.0
+                amplitude: 1.0
+          markers:
+            12m1:
+              delay: 0.0         # (s)
+            12m2:
+              delay: 0.0
+            12m3:
+              delay: 0.0
+            12m4:
+              delay: 0.0
+    """
+
+    def __init__(self, resource_name=None, name="Unlabeled APS"):
+        self.name = name
+        self.resource_name = resource_name
+
+        if aps1_missing:
+            logger.warning("Could not load aps library")
+
+        if fake_aps2:
+            self.wrapper = MagicMock()
+        else:
+            self.wrapper = libaps.APS()
+
+        self.ch_amplitudes = [1,1,1,1]
+        self.ch_offsets = [0,0,0,0]
+        self.ch_enabled = [1, 1, 1, 1]
+
+        self.run           = self.wrapper.run
+        self.stop          = self.wrapper.stop
+        self.connected     = False
+
+        self._sequence_filename = None
+        self._mode = "RUN_SEQUENCE"
+
+    def connect(self, resource_name=None):
+        if resource_name is None and self.resource_name is None:
+            raise Exception("Must supply a resource name to 'connect' if the instrument was initialized without one.")
+        elif resource_name is not None:
+            self.resource_name = resource_name
+        print(resource_name)
+        
+        if self.resource_name.isdigit():
+            self.wrapper.connect(int(self.resource_name))
+        else:
+            self.wrapper.connect(self.resource_name.encode('utf-8'))
+        self.connected = True
+
+    def disconnect(self):
+        if self.resource_name and self.connected:
+            self.stop()
+            self.wrapper.disconnect()
+            self.connected = False
+
+    def set_amplitude(self, chs, value):
+        if isinstance(chs, int) or len(chs)==1:
+            self.wrapper.set_amplitude(int(chs-1), value)
+            self.ch_amplitudes[chs-1] = value
+        else:
+            for ch in chs:
+                self.wrapper.set_amplitude(int(ch)-1, value)
+                self.ch_amplitudes[int(ch)-1] = value
+                
+    def get_amplitude(self, chs):
+        if isinstance(chs, int) or len(chs)==1:
+            return self.ch_amplitudes[chs]
+        else:
+            return self.ch_amplitudes
+        
+    def set_offset(self, chs, value):
+        if isinstance(chs, int) or len(chs)==1:
+            self.wrapper.set_offset(int(chs-1), value)
+            self.ch_offsets[chs-1] = value
+        else:
+            for ch in chs:
+                self.wrapper.set_offset(int(ch)-1, value)
+                self.ch_offsets[int(ch)-1] = value
+                
+    def get_offset(self, chs):
+        if isinstance(chs, int) or len(chs)==1:
+            return self.ch_offsets[chs]
+        else:
+            return self.ch_offsets
+        
+    def set_enabled(self, chs, value):
+        if isinstance(chs, int) or len(chs)==1:
+            self.wrapper.set_enabled(int(chs-1), value)
+            self.ch_enabled[chs-1] = value
+        else:
+            for ch in chs:
+                self.wrapper.set_enabled(int(ch)-1, value)
+                self.ch_enabled[int(ch)-1] = value
+                
+    def get_enabled(self, chs):
+        if isinstance(chs, int) or len(chs)==1:
+            return self.ch_enabled[chs]
+        else:
+            return self.ch_enabled
+
+    def set_all(self, settings_dict, prefix=""):
+        # Pop the channel settings
+        settings = deepcopy(settings_dict)
+        quad_channels = settings.pop('tx_channels')
+        # Call the non-channel commands
+        super(APS, self).set_all(settings)
+
+        # Mandatory arguments
+        for key in ['address', 'seq_file', 'master']:
+            if key not in settings.keys():
+                raise ValueError("Instrument {} configuration lacks mandatory key {}".format(self, key))
+
+        # We expect a dictionary of channel names and their properties
+        main_quad_dict = quad_channels.pop('12', None)
+        if not main_quad_dict:
+            raise ValueError("APS2 {} expected to receive quad channel '12'".format(self))
+
+        # Set the properties of individual hardware channels (offset, amplitude)
+        for chan_num, chan_name in enumerate(['1', '2']):
+            chan_dict = main_quad_dict.pop(chan_name, None)
+            if not chan_dict:
+                raise ValueError("Could not find channel {} in quadrature channel 12 in settings for {}".format(chan_name, self))
+            for chan_attr, value in chan_dict.items():
+                try:
+                    getattr(self, 'set_' + chan_attr)(chan_num, value)
+                except AttributeError:
+                    pass
+                
+        main_quad_dict = quad_channels.pop('34', None)
+        if not main_quad_dict:
+            raise ValueError("APS2 {} expected to receive quad channel '34'".format(self))
+            
+        # Set the properties of individual hardware channels (offset, amplitude)
+        for chan_num, chan_name in enumerate(['3', '4']):
+            chan_dict = main_quad_dict.pop(chan_name, None)
+            if not chan_dict:
+                raise ValueError("Could not find channel {} in quadrature channel 34 in settings for {}".format(chan_name, self))
+            for chan_attr, value in chan_dict.items():
+                try:
+                    getattr(self, 'set_' + chan_attr)(chan_num, value)
+                except AttributeError:
+                    pass        
+
+    def load_waveform(self, channel, data):
+        if channel not in (1, 2, 3, 4):
+            raise ValueError("Cannot load APS waveform data to channel {} on {} -- must be 1, 2, 3, 4.".format(channel, self.name))
+        try:
+            if data.dtype == np.int:
+                self.wrapper.loadWaveform(channel-1, data.astype(np.int16))
+            elif data.dtype == np.float:
+                self.wrapper.loadWaveform(channel-1, data.astype(np.float32))
+            else:
+                raise ValueError("Channel waveform data must be either int or float. Unknown type {}.".format(data.dtype))
+        except AttributeError as ex:
+            raise ValueError("Channel waveform data must be a numpy array.") from ex
+
+    @property
+    def seq_file(self):
+        return self._sequence_filename
+    @seq_file.setter
+    def seq_file(self, filename):
+        self.wrapper.load_config(filename)
+        self._sequence_filename = filename
+
+    @property
+    def trigger_source(self):
+        return self.wrapper.get_trigger_source()
+    @trigger_source.setter
+    def trigger_source(self, source):
+        if source in ["External"]:
+            self.wrapper.triggerSource(getattr(self.wrapper,"TRIGGER_" + source.upper()))
+        else:
+            raise ValueError("Invalid trigger source specification.")
+
+    @property
+    def sampling_rate(self):
+        return self.wrapper.samplingRate
+    @sampling_rate.setter
+    def sampling_rate(self, value):
+        if value != 1.2e9:
+            raise ValueError("APS1 Sampling Rate can only be 1.2e9")
