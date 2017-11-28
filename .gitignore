@@ -7,7 +7,7 @@ data/*
 doc/_build/*
 doc/make.bat
 config/config.json
-config/*.yml
+config/
 *.egg-info*
 *.dll
 *.log

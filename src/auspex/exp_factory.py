@@ -44,7 +44,7 @@ def correct_resource_name(resource_name):
         resource_name = resource_name.replace(k, v)
     return resource_name
 
-def quince():
+def quince(filepath = config.configFile):
     if (os.name == 'nt'):
         subprocess.Popen(['run-quince.bat', config.configFile], env=os.environ.copy())
     else:
@@ -142,11 +142,11 @@ class QubitExpFactory(object):
     will override some of the config values depending on the experiment being run."""
 
     @staticmethod
-    def run(meta_file=None, expname=None, calibration=False, cw_mode=False, repeats=None):
+    def run(meta_file=None, expname=None, calibration=False, save_data=True, cw_mode=False, repeats=None):
         """This passes all of the parameters given to the *create* method
         and then runs the experiment immediately."""
         exp = QubitExpFactory.create(meta_file=meta_file, expname=expname,
-                                     calibration=calibration, cw_mode=cw_mode,
+                                     calibration=calibration, save_data=save_data, cw_mode=cw_mode,
                                     repeats=repeats)
         exp.run_sweeps()
         return exp
@@ -238,7 +238,7 @@ class QubitExpFactory(object):
 
         sweep_offset("I_offset", offset_pts)
         I1_amps = np.array([x[1] for x in buff.get_data()])
-        I1_offset, xpts, ypts = find_null_offset(offset_pts, I1_amps)
+        I1_offset, xpts, ypts = find_null_offset(offset_pts[1:], I1_amps[1:])
         plt["I-offset"] = (offset_pts, I1_amps)
         plt["Fit I-offset"] = (xpts, ypts)
         logger.info("Found first pass I offset of {}.".format(I1_offset))
@@ -247,7 +247,7 @@ class QubitExpFactory(object):
         mce.first_exp = False # slight misnomer to indicate that no new plot is needed
         sweep_offset("Q_offset", offset_pts)
         Q1_amps = np.array([x[1] for x in buff.get_data()])
-        Q1_offset, xpts, ypts = find_null_offset(offset_pts, Q1_amps)
+        Q1_offset, xpts, ypts = find_null_offset(offset_pts[1:], Q1_amps[1:])
         plt["Q-offset"] = (offset_pts, Q1_amps)
         plt["Fit Q-offset"] = (xpts, ypts)
         logger.info("Found first pass Q offset of {}.".format(Q1_offset))
@@ -255,7 +255,7 @@ class QubitExpFactory(object):
 
         sweep_offset("I_offset", offset_pts)
         I2_amps = np.array([x[1] for x in buff.get_data()])
-        I2_offset, xpts, ypts = find_null_offset(offset_pts, I2_amps)
+        I2_offset, xpts, ypts = find_null_offset(offset_pts[1:], I2_amps[1:])
         plt["I-offset"] = (offset_pts, I2_amps)
         plt["Fit I-offset"] = (xpts, ypts)
         logger.info("Found second pass I offset of {}.".format(I2_offset))
@@ -273,7 +273,7 @@ class QubitExpFactory(object):
 
         sweep_offset(cals[first_cal], cal_pts[first_cal])
         amps1 = np.array([x[1] for x in buff.get_data()])
-        offset1, xpts, ypts = find_null_offset(cal_pts[first_cal], amps1, default=cal_defaults[first_cal])
+        offset1, xpts, ypts = find_null_offset(cal_pts[first_cal][1:], amps1[1:], default=cal_defaults[first_cal])
         plt2[cals[first_cal]] = (cal_pts[first_cal], amps1)
         plt2["Fit "+cals[first_cal]] = (xpts, ypts)
         logger.info("Found {} offset of {}.".format(first_cal, offset1))
@@ -281,7 +281,7 @@ class QubitExpFactory(object):
 
         sweep_offset(cals[second_cal], cal_pts[second_cal])
         amps2 = np.array([x[1] for x in buff.get_data()])
-        offset2, xpts, ypts = find_null_offset(cal_pts[second_cal], amps2, default=cal_defaults[second_cal])
+        offset2, xpts, ypts = find_null_offset(cal_pts[second_cal][1:], amps2[1:], default=cal_defaults[second_cal])
         plt2[cals[second_cal]] = (cal_pts[second_cal], amps2)
         plt2["Fit "+cals[second_cal]] = (xpts, ypts)
         logger.info("Found {} offset of {}.".format(second_cal, offset2))
@@ -333,12 +333,17 @@ class QubitExpFactory(object):
         # Strip any spaces, since we only care about the general flow, and not any
         # named connectors.
         def strip_conn_name(text):
-            vals = text.strip().split()
-            if len(vals) == 0:
-                raise ValueError("Please disable filters with missing source.")
-            elif len(vals) > 2:
-                raise ValueError("Spaces are reserved to separate filters and connectors. Please rename {}.".format(text))
-            return vals[0]
+            val_list = []
+            # multiple sourcs are separated by commas
+            all_vals = text.strip().split(',')
+            for vals in all_vals:
+                val = vals.strip().split()
+                if len(val) == 0:
+                    raise ValueError("Please disable filters with missing source.")
+                elif len(val) > 2:
+                    raise ValueError("Spaces are reserved to separate filters and connectors. Please rename {}.".format(vals))
+                val_list.append(val[0])
+            return val_list
 
         # Graph edges for the measurement filters
         # switch stream selector to raw (by default) before building the graph
@@ -364,12 +369,14 @@ class QubitExpFactory(object):
                 else:
                     filters[s]['enabled'] = False
 
-        edges = [(strip_conn_name(v["source"]), k) for k,v in filters.items() if ("enabled" not in v.keys()) or v["enabled"]]
+        edges = [[(s, k) for s in strip_conn_name(v["source"])] for k,v in filters.items() if ("enabled" not in v.keys()) or v["enabled"]]
+        edges = [e for edge in edges for e in edge]
+
         dag = nx.DiGraph()
         dag.add_edges_from(edges)
 
         inst_to_enable = []
-        filt_to_enable = []
+        filt_to_enable = set()
 
         # Find any writer endpoints of the receiver channels
         for receiver_name, num_segments in meta_info['receivers'].items():
@@ -403,6 +410,10 @@ class QubitExpFactory(object):
             plotters = []
             singleshot = []
             buffers = []
+
+            def check_endpoint(endpoint_name, endpoint_type):
+                source_type = filters[filters[endpoint_name]['source'].split(' ')[0]]['type']
+                return filters[endpoint_name]['type'] == endpoint_type and (not hasattr(filters[endpoint_name], 'enabled') or filters[endpoint_name]['enabled']) and not (calibration and source_type == 'Correlator') and (not source_type == 'SingleShotMeasurement' or experiment.__class__.__name__ == 'SingleShotFidelityExperiment')
             for filt_name, filt in filters.items():
                 if filt_name in [stream_sel_name] + Alazar_stream_selectors:
                     # Find descendants of the channel selector
@@ -410,11 +421,11 @@ class QubitExpFactory(object):
                     # Find endpoints within the descendants
                     endpoints = [n for n in chan_descendants if dag.in_degree(n) == 1 and dag.out_degree(n) == 0]
                     # Find endpoints which are enabled writers, plotters or singleshot filters without an output. Disable outputs of single-shot filters when not used.
-                    writers += [e for e in endpoints if filters[e]["type"] == "WriteToHDF5" and (not hasattr(filters[e], "enabled") or filters[e]["enabled"]) and (not filters[filters[e]["source"].split(" ")[0]]['type'] == 'SingleShotMeasurement' or experiment.__class__.__name__ == "SingleShotFidelityExperiment")]
-                    plotters += [e for e in endpoints if filters[e]["type"] == "Plotter" and (not hasattr(filters[e], "enabled") or filters[e]["enabled"]) and (not filters[filters[e]["source"].split(" ")[0]]['type'] == 'SingleShotMeasurement' or experiment.__class__.__name__ == "SingleShotFidelityExperiment")]
-                    buffers += [e for e in endpoints if filters[e]["type"] == "DataBuffer" and (not hasattr(filters[e], "enabled") or filters[e]["enabled"]) and (not filters[filters[e]["source"].split(" ")[0]]['type'] == 'SingleShotMeasurement' or experiment.__class__.__name__ == "SingleShotFidelityExperiment")]
-                    singleshot += [e for e in endpoints if filters[e]["type"] == "SingleShotMeasurement" and (not hasattr(filters[e], "enabled") or filters[e]["enabled"]) and experiment.__class__.__name__ == "SingleShotFidelityExperiment"]
-            filt_to_enable.extend(set().union(writers, plotters, singleshot, buffers))
+                    writers += [e for e in endpoints if check_endpoint(e, "WriteToHDF5")]
+                    plotters += [e for e in endpoints if check_endpoint(e, "Plotter")]
+                    buffers += [e for e in endpoints if check_endpoint(e, "DataBuffer")]
+                    singleshot += [e for e in endpoints if check_endpoint(e, "SingleShotMeasurement") and experiment.__class__.__name__ == "SingleShotFidelityExperiment"]
+            filt_to_enable.update(set().union(writers, plotters, singleshot, buffers))
             if calibration:
                 # For calibrations the user should only have one writer enabled, otherwise we will be confused.
                 if len(writers) > 1:
@@ -470,18 +481,19 @@ class QubitExpFactory(object):
             if buffers:
                 buffer_ancestors = set().union(*[nx.ancestors(dag, bf) for bf in buffers])
                 buffer_ancestors.remove(dig_name)
-            filt_to_enable.extend(set().union(writer_ancestors, plotter_ancestors, singleshot_ancestors, buffer_ancestors))
+            filt_to_enable.update(set().union(writer_ancestors, plotter_ancestors, singleshot_ancestors, buffer_ancestors))
 
         if calibration:
             # One to one writers to qubits
-            writer_to_qubit = {v: k for k, v in qubit_to_writer.items()}
+            writer_to_qubit = {v: [k] for k, v in qubit_to_writer.items()}
         else:
-            # Many to one writers to qubits
+            # Many to one writers to qubits or viceversa
             writer_to_qubit = {}
             for q, ws in qubit_to_writer.items():
                 for w in ws:
-                    writer_to_qubit[w] = q
-
+                    if w not in writer_to_qubit:
+                        writer_to_qubit[w] = []
+                    writer_to_qubit[w].append(q)
         # Disable digitizers and APSs and then build ourself back up with the relevant nodes
         for instr_name in instruments.keys():
             if 'tx_channels' in instruments[instr_name].keys() or 'rx_channels' in instruments[instr_name].keys():
@@ -497,7 +509,7 @@ class QubitExpFactory(object):
         #label measurement with qubit name (assuming the convention "M-"+qubit_name)
         for meas_name in filt_to_enable:
             if filters[meas_name]["type"] == "WriteToHDF5":
-                filters[meas_name]['groupname'] = writer_to_qubit[meas_name] \
+                filters[meas_name]['groupname'] = ''.join(writer_to_qubit[meas_name]) \
                     + "-" + filters[meas_name]['groupname']
 
         for instr_name, chan_data in meta_info['instruments'].items():
