@@ -8,7 +8,7 @@
 
 __all__ = ['APS', 'APS2', 'DigitalAttenuator', 'SpectrumAnalyzer']
 
-from .instrument import Instrument, SCPIInstrument, VisaInterface, MetaInstrument
+from .instrument import Instrument, SCPIInstrument, VisaInterface, MetaInstrument, FloatCommand
 from auspex.log import logger
 
 from types import MethodType
@@ -35,7 +35,7 @@ else:
         fake_aps2 = True
         aps2_missing = True
         aps2 = MagicMock()
-        
+
     try:
         import APS as libaps
         fake_aps1 = False
@@ -49,6 +49,8 @@ class DigitalAttenuator(SCPIInstrument):
     instrument_type = "Digital attenuator"
     NUM_CHANNELS = 3
     instrument_type = 'Attenuator'
+
+    ch1attenuation = FloatCommand(get_string="GET 1", set_string="SET 1 {:.2f}")
 
     def __init__(self, resource_name=None, name='Unlabeled Digital Attenuator'):
         super(DigitalAttenuator, self).__init__(resource_name=resource_name,
@@ -420,10 +422,15 @@ class APS(Instrument, metaclass=MakeSettersGetters):
         else:
             self.wrapper = libaps.APS()
 
-        self.ch_amplitudes = [1,1,1,1]
-        self.ch_offsets = [0,0,0,0]
-        self.ch_enabled = [1, 1, 1, 1]
+        self.set_offset    = self.wrapper.set_channel_offset
+        self.set_enabled   = self.wrapper.set_channel_enabled
 
+        self.get_amplitude = self.wrapper.get_channel_scale
+        self.get_offset    = self.wrapper.get_channel_offset
+        self.get_enabled   = self.wrapper.get_channel_enabled
+
+        # self.trigger_source = self.wrapper.triggerSource
+        self.init          = self.wrapper.init
         self.run           = self.wrapper.run
         self.stop          = self.wrapper.stop
         self.connected     = False
@@ -436,8 +443,7 @@ class APS(Instrument, metaclass=MakeSettersGetters):
             raise Exception("Must supply a resource name to 'connect' if the instrument was initialized without one.")
         elif resource_name is not None:
             self.resource_name = resource_name
-        print(resource_name)
-        
+
         if self.resource_name.isdigit():
             self.wrapper.connect(int(self.resource_name))
         else:
@@ -452,48 +458,10 @@ class APS(Instrument, metaclass=MakeSettersGetters):
 
     def set_amplitude(self, chs, value):
         if isinstance(chs, int) or len(chs)==1:
-            self.wrapper.set_amplitude(int(chs-1), value)
-            self.ch_amplitudes[chs-1] = value
+            self.wrapper.set_amplitude(int(chs)-1, value)
         else:
-            for ch in chs:
-                self.wrapper.set_amplitude(int(ch)-1, value)
-                self.ch_amplitudes[int(ch)-1] = value
-                
-    def get_amplitude(self, chs):
-        if isinstance(chs, int) or len(chs)==1:
-            return self.ch_amplitudes[chs]
-        else:
-            return self.ch_amplitudes
-        
-    def set_offset(self, chs, value):
-        if isinstance(chs, int) or len(chs)==1:
-            self.wrapper.set_offset(int(chs-1), value)
-            self.ch_offsets[chs-1] = value
-        else:
-            for ch in chs:
-                self.wrapper.set_offset(int(ch)-1, value)
-                self.ch_offsets[int(ch)-1] = value
-                
-    def get_offset(self, chs):
-        if isinstance(chs, int) or len(chs)==1:
-            return self.ch_offsets[chs]
-        else:
-            return self.ch_offsets
-        
-    def set_enabled(self, chs, value):
-        if isinstance(chs, int) or len(chs)==1:
-            self.wrapper.set_enabled(int(chs-1), value)
-            self.ch_enabled[chs-1] = value
-        else:
-            for ch in chs:
-                self.wrapper.set_enabled(int(ch)-1, value)
-                self.ch_enabled[int(ch)-1] = value
-                
-    def get_enabled(self, chs):
-        if isinstance(chs, int) or len(chs)==1:
-            return self.ch_enabled[chs]
-        else:
-            return self.ch_enabled
+            self.wrapper.set_channel_scale(int(chs[0])-1, value)
+            self.wrapper.set_channel_scale(int(chs[1])-1, value)
 
     def set_all(self, settings_dict, prefix=""):
         # Pop the channel settings
@@ -522,11 +490,11 @@ class APS(Instrument, metaclass=MakeSettersGetters):
                     getattr(self, 'set_' + chan_attr)(chan_num, value)
                 except AttributeError:
                     pass
-                
+
         main_quad_dict = quad_channels.pop('34', None)
         if not main_quad_dict:
             raise ValueError("APS2 {} expected to receive quad channel '34'".format(self))
-            
+
         # Set the properties of individual hardware channels (offset, amplitude)
         for chan_num, chan_name in enumerate(['3', '4']):
             chan_dict = main_quad_dict.pop(chan_name, None)
@@ -536,16 +504,16 @@ class APS(Instrument, metaclass=MakeSettersGetters):
                 try:
                     getattr(self, 'set_' + chan_attr)(chan_num, value)
                 except AttributeError:
-                    pass        
+                    pass
 
     def load_waveform(self, channel, data):
         if channel not in (1, 2, 3, 4):
             raise ValueError("Cannot load APS waveform data to channel {} on {} -- must be 1, 2, 3, 4.".format(channel, self.name))
         try:
             if data.dtype == np.int:
-                self.wrapper.loadWaveform(channel-1, data.astype(np.int16))
+                self.wrapper.loadWaveform(channel, data.astype(np.int16))
             elif data.dtype == np.float:
-                self.wrapper.loadWaveform(channel-1, data.astype(np.float32))
+                self.wrapper.loadWaveform(channel, data.astype(np.float32))
             else:
                 raise ValueError("Channel waveform data must be either int or float. Unknown type {}.".format(data.dtype))
         except AttributeError as ex:
@@ -565,9 +533,9 @@ class APS(Instrument, metaclass=MakeSettersGetters):
     @trigger_source.setter
     def trigger_source(self, source):
         if source in ["External"]:
-            self.wrapper.triggerSource(getattr(self.wrapper,"TRIGGER_" + source.upper()))
+            self.wrapper.triggerSource = source.lower()
         else:
-            raise ValueError("Invalid trigger source specification.")
+            raise ValueError("Trigger Source must be 'External'")
 
     @property
     def sampling_rate(self):
