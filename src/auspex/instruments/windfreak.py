@@ -30,15 +30,18 @@ class SynthHD(SCPIInstrument):
     instrument_type = "Microwave Source"
     ch1frequency = FloatCommand(get_string="C0f?", set_string="C0f{:f}")
     ch1power     = FloatCommand(get_string="C0W?", set_string="C0W{:f}")
+    ch1output    = Command(get_string="C0h?", set_string="C0h{!s}",
+                        value_map={True: '1', False: '0'})
+
     ch2frequency = FloatCommand(get_string="C1f?", set_string="C1f{:f}")
     ch2power     = FloatCommand(get_string="C1W?", set_string="C1W{:f}")
+    ch2output    = Command(get_string="C1h?", set_string="C1h{!s}",
+                        value_map={True: '1', False: '0'})
 
-    # output    = Command(get_string="r?", set_string="r",
-    #                     value_map={True: '0', False: '1'})
-    # freq_source  = StringCommand(scpi_string="x",
-    #                       value_map={'INTERNAL 10MHz': '2',
-    #                                  'INTERNAL 27MHz': '1',
-    #                                  'EXTERNAL': '0'})
+    freqsource  = StringCommand(scpi_string="x",
+                          value_map={'INTERNAL 10MHz': '2',
+                                     'INTERNAL 27MHz': '1',
+                                     'EXTERNAL': '0'})
 
     def __init__(self, resource_name=None, *args, **kwargs):
         super(SynthHD, self).__init__(resource_name, *args, **kwargs)
@@ -49,61 +52,12 @@ class SynthHD(SCPIInstrument):
 
         # print(self.resource_name)
         super(SynthHD, self).connect(resource_name=resource_name, interface_type=interface_type)
-        self.interface._resource.read_termination = u""
-        self.interface._resource.write_termination = u""
-        self.interface._resource.timeout = 3000 #seem to have trouble timing out on first query sometimes
+        self.interface._resource.read_termination = u"\n"
+        self.interface._resource.write_termination = u"\n"
+        # self.interface._resource.timeout = 3000 #seem to have trouble timing out on first query sometimes
 
-    # def get_frequency(self, channel):
-    #     return float(self.interface.query("C{:d}f?".format(channel)))*1e6
-    #
-    # def set_frequency(self, channel, value):
-    #     self.interface.write("C{:d}f{:f}".format(channel, value/1e6))
-    #
-    # def get_power(self, channel):
-    #     return float(self.interface.query("C{:d}W?".format(channel)))
-    #
-    # def set_power(self, channel, value):
-    #     self.interface.write("C{:d}W{:f}".format(channel, value))
-    #
-    # def get_output(self, channel):
-    #     return int(self.interface.query("C{:d}r?".format(channel)))
-    #
-    # def set_output(self, channel, value):
-    #     self.interface.write("C{:d}r{:d}".format(channel, value))
-    #
-    #     # Channel Specific
-    # def get_ch1frequency(self):
-    #     return float(self.interface.query("C0f?"))*1e6
-    #
-    # def set_ch1frequency(self, value):
-    #     self.interface.write("C0f{:f}".format(value/1e6))
-    #
-    # def get_ch1power(self):
-    #     return float(self.interface.query("C0W?"))
-    #
-    # def set_ch1power(self, value):
-    #     self.interface.write("C0W{:f}".format(value))
-    #
-    # def get_ch1output(self):
-    #     return int(self.interface.query("C0r?".format))
-    #
-    # def set_ch1output(self, value):
-    #     self.interface.write("C0r{:d}".format(value))
-    #
-    # def get_ch2frequency(self):
-    #     return float(self.interface.query("C1f?"))*1e6
-    #
-    # def set_ch2frequency(self, value):
-    #     self.interface.write("C1f{:f}".format(value/1e6))
-    #
-    # def get_ch2power(self):
-    #     return float(self.interface.query("C1W?"))
-    #
-    # def set_ch2power(self, value):
-    #     self.interface.write("C1W{:f}".format(value))
-    #
-    # def get_ch2output(self):
-    #     return int(self.interface.query("C1r?".format))
-    #
-    # def set_ch2output(self, value):
-    #     self.interface.write("C1r{:d}".format(value))
+        # Set External 10MHz Reference
+        self.interface.write('*10x0')
+
+        # Turn on
+        self.interface.write("C0E1r1C1E1r1")
