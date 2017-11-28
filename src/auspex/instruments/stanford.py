@@ -6,7 +6,7 @@
 #
 #    http://www.apache.org/licenses/LICENSE-2.0
 
-__all__ = ['SR830', 'SR865']
+__all__ = ['SR830', 'SR865', 'SIM928']
 
 from auspex.log import logger
 from .instrument import SCPIInstrument, StringCommand, FloatCommand, IntCommand, Command
@@ -251,3 +251,37 @@ class SR865(SCPIInstrument):
             return 10*tc
         else:
             raise Exception("Unknown delay for unknown filter slope {:f}".format(fs))
+
+class SIM928(SCPIInstrument):
+    """SRS 928 Low Noise Voltage Source"""
+    instrument_type = "Voltage Source"
+    # ch1_voltage = FloatCommand(get_string='SNDT 1,"VOLT?";GETN? 1,80', set_string='SNDT 1,"VOLT {:f}"')
+
+    def __init__(self, resource_name, **kwargs):
+        super(SIM928, self).__init__(resource_name, **kwargs)
+        self.name = "SIM 928 Voltage Source"
+
+    def connect(self, resource_name=None, interface_type=None):
+        super(SIM928, self).connect(resource_name=resource_name, interface_type=interface_type)
+        self.interface._resource.read_termination = u"\r\n"
+        self.interface._resource.write_termination = u"\r\n"
+
+
+    @property
+    def ch1_voltage(self):
+        self.interface.write('SNDT 1,"VOLT?"')
+        self.interface.query('GETN? 1,80')
+        value = self.interface.read()
+        return float(value.strip())
+
+    @ch1_voltage.setter
+    def ch1_voltage(self, value):
+        if abs(value) > 20.0:
+            raise ValueError("SIM can only go from -20 to +20 V")
+        self.interface.write('SNDT 1,"VOLT {:f}"'.format(value))
+
+    def get_ch1_voltage(self):
+        return self.ch1_voltage
+
+    def set_ch1_voltage(self, value):
+        self.ch1_voltage = value
