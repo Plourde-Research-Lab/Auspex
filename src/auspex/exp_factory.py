@@ -355,6 +355,15 @@ class QubitExpFactory(object):
                 else:
                     filters[s]['enabled'] = False
 
+            # Implement Alazar as well
+            Alazar_stream_selectors = [k for k,v in filters.items() if v["type"] == "AlazarStreamSelector" and v["source"] == filters[stream_sel_name_orig]['source'] and v['channel'] == filters[stream_sel_name_orig]['channel']]
+            for s in Alazar_stream_selectors:
+                if filters[s]['stream_type'] == experiment.ss_stream_type:
+                    filters[s]['enabled'] = True
+                    stream_sel_name = s
+                else:
+                    filters[s]['enabled'] = False
+
         edges = [(strip_conn_name(v["source"]), k) for k,v in filters.items() if ("enabled" not in v.keys()) or v["enabled"]]
         dag = nx.DiGraph()
         dag.add_edges_from(edges)
@@ -385,9 +394,9 @@ class QubitExpFactory(object):
 
             # Find the enabled X6 stream selectors with the same channel as the receiver. Allow to plot/save raw/demod/int streams belonging to the same receiver
             if calibration:
-                X6_stream_selectors = []
+                Alazar_stream_selectors = []
             else:
-                X6_stream_selectors = [k for k,v in filters.items() if (v["type"] == 'X6StreamSelector' and v["source"] == filters[stream_sel_name]['source'] and v["enabled"] == True and v["channel"] == filters[stream_sel_name]["channel"] and v["dsp_channel"] == filters[stream_sel_name]["dsp_channel"])]
+                Alazar_stream_selectors = [k for k,v in filters.items() if (v["type"] == 'AlazarStreamSelector' and v["source"] == filters[stream_sel_name]['source'] and v["enabled"] == True and v["channel"] == filters[stream_sel_name]["channel"])]
 
             # Enable the tree for single-shot fidelity experiment. Change stream_sel_name to raw (by default)
             writers = []
@@ -395,7 +404,7 @@ class QubitExpFactory(object):
             singleshot = []
             buffers = []
             for filt_name, filt in filters.items():
-                if filt_name in [stream_sel_name] + X6_stream_selectors:
+                if filt_name in [stream_sel_name] + Alazar_stream_selectors:
                     # Find descendants of the channel selector
                     chan_descendants = nx.descendants(dag, filt_name)
                     # Find endpoints within the descendants
