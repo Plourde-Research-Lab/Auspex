@@ -67,7 +67,7 @@ class PulseCalibration(object):
         self.exp        = None
         self.axis_descriptor = None
         self.cw_mode    = False
-        self.saved_settings = config.yaml_load(config.configFile)
+        self.saved_settings = config.load_meas_file(config.meas_file)
         self.settings = deepcopy(self.saved_settings) #make a copy for used during calibration
         self.quad = quad
         if quad == "real":
@@ -169,7 +169,7 @@ class PulseCalibration(object):
 
     def update_settings(self):
         """Update calibrated YAML with calibration parameters"""
-        config.yaml_dump(self.saved_settings, config.configFile)
+        config.dump_meas_file(self.saved_settings, config.meas_file)
 
     def write_to_log(self, cal_result):
         """Log calibration result"""
@@ -315,13 +315,14 @@ class RabiAmpCalibration(PulseCalibration):
 
 
 class RamseyCalibration(PulseCalibration):
-    def __init__(self, qubit_name, delays=np.linspace(0.0, 20.0, 41)*1e-6, two_freqs = False, added_detuning = 150e3, set_source = True, **kwargs):
+    def __init__(self, qubit_name, delays=np.linspace(0.0, 20.0, 41)*1e-6, two_freqs = False, added_detuning = 150e3, set_source = True, AIC = True, **kwargs):
         super(RamseyCalibration, self).__init__(qubit_name)
         self.filename = 'Ramsey/Ramsey'
         self.delays = delays
         self.two_freqs = two_freqs
         self.added_detuning = added_detuning
         self.set_source = set_source
+        self.AIC = AIC #Akaike information criterion for model choice
         self.axis_descriptor = [delay_descriptor(self.delays)]
 
     def sequence(self):
@@ -343,8 +344,7 @@ class RamseyCalibration(PulseCalibration):
         self.set()
         self.exp.settings['instruments'][qubit_source]['frequency'] = set_freq
         data, _ = self.run()
-        fit_freqs, fit_errs, all_params = fit_ramsey(self.delays, data, two_freqs = self.two_freqs)
-
+        fit_freqs, fit_errs, all_params, all_errs = fit_ramsey(self.delays, data, two_freqs = self.two_freqs, AIC = self.AIC)
         # Plot the results
         self.plot["Data"] = (self.delays, data)
         ramsey_f = ramsey_2f if len(fit_freqs) == 2 else ramsey_1f #1-freq fit if the 2-freq has failed
@@ -357,7 +357,7 @@ class RamseyCalibration(PulseCalibration):
         self.exp.settings['instruments'][qubit_source]['frequency'] = set_freq
         data, _ = self.run()
 
-        fit_freqs, fit_errs, all_params = fit_ramsey(self.delays, data, two_freqs = self.two_freqs)
+        fit_freqs, fit_errs, all_params, all_errs = fit_ramsey(self.delays, data, two_freqs = self.two_freqs, AIC = self.AIC)
 
         # Plot the results
         self.init_plot()
@@ -445,10 +445,10 @@ class PhaseEstimation(PulseCalibration):
 
             logger.info("Phase: %.4f Sigma: %.4f"%(phase,sigma))
             #update amplitude
-            ct+=1
             self.amplitude, done_flag = phase_to_amplitude(phase, sigma, self.amplitude, self.target, ct, self.iteration_limit)
+            ct+=1
 
-        logger.info("Found amplitude for {} calibration of: {}".format(type(self).__name__, amp))
+        logger.info("Found amplitude for {} calibration of: {}".format(type(self).__name__, self.amplitude))
         #set_chan = self.qubit_names[0] if len(self.qubit) == 1 else ChannelLibraries.EdgeFactory(*self.qubits).label
         return (set_amp, self.amplitude)
 
@@ -852,10 +852,8 @@ def phase_to_amplitude(phase, sigma, amp, target, ct, iteration_limit=5):
     if np.abs(phase_error) < 1e-2 or np.abs(phase_error/sigma) < 1 or ct > iteration_limit:
         if np.abs(phase_error) < 1e-2:
             logger.info('Reached target rotation angle accuracy');
-            amplitude = amp
         elif abs(phase_error/sigma) < 1:
             logger.info('Reached phase uncertainty limit');
-            amplitude = amp
         else:
             logger.info('Hit max iteration count');
         done_flag = 1

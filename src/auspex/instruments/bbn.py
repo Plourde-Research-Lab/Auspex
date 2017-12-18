@@ -10,10 +10,9 @@ __all__ = ['APS', 'APS2', 'DigitalAttenuator', 'SpectrumAnalyzer']
 
 from .instrument import Instrument, SCPIInstrument, VisaInterface, MetaInstrument, FloatCommand
 from auspex.log import logger
-
+import auspex.config as config
 from types import MethodType
 from unittest.mock import MagicMock
-import auspex.globals
 from time import sleep
 from visa import VisaIOError
 import numpy as np
@@ -22,9 +21,7 @@ from copy import deepcopy
 # Dirty trick to avoid loading libraries when scraping
 # This code using quince.
 aps2_missing = False
-aps1_missing = False
-
-if auspex.globals.auspex_dummy_mode:
+if config.auspex_dummy_mode:
     fake_aps2 = True
     fake_aps1 = True
     aps2 = MagicMock()
@@ -213,7 +210,6 @@ class APS2(Instrument, metaclass=MakeSettersGetters):
         else:
             self.wrapper = aps2.APS2()
 
-        self.set_offset    = self.wrapper.set_channel_offset
         self.set_enabled   = self.wrapper.set_channel_enabled
         self.set_mixer_phase_skew = self.wrapper.set_mixer_phase_skew
         self.set_mixer_amplitude_imbalance = self.wrapper.set_mixer_amplitude_imbalance
@@ -256,6 +252,13 @@ class APS2(Instrument, metaclass=MakeSettersGetters):
         else:
             self.wrapper.set_channel_scale(int(chs[0])-1, value)
             self.wrapper.set_channel_scale(int(chs[1])-1, value)
+
+    def set_offset(self, chs, value):
+        if isinstance(chs, int) or len(chs)==1:
+            self.wrapper.set_channel_offset(int(chs), value)
+        else:
+            self.wrapper.set_channel_offset(int(chs[0])-1, value)
+            self.wrapper.set_channel_offset(int(chs[1])-1, value)
 
     def set_all(self, settings_dict, prefix=""):
         # Pop the channel settings

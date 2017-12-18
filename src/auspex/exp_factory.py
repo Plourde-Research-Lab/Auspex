@@ -24,7 +24,6 @@ import networkx as nx
 import auspex.config as config
 import auspex.instruments
 import auspex.filters
-import auspex.globals
 
 from auspex.log import logger
 from auspex.experiment import Experiment
@@ -33,7 +32,8 @@ from auspex.filters.io import DataBuffer
 from auspex.filters.plot import Plotter, ManualPlotter
 from auspex.instruments.instrument import Instrument, SCPIInstrument, CLibInstrument, DigitizerChannel
 from auspex.stream import OutputConnector, DataStreamDescriptor, DataAxis
-from auspex.experiment import FloatParameter
+from auspex.experiment import FloatParameter, IntParameter
+from auspex.instruments.X6 import X6Channel
 from auspex.instruments.alazar import AlazarChannel
 from auspex.mixer_calibration import MixerCalibrationExperiment, find_null_offset
 
@@ -43,11 +43,16 @@ def correct_resource_name(resource_name):
         resource_name = resource_name.replace(k, v)
     return resource_name
 
-def quince(filepath = config.configFile):
+def quince(meas_file=None):
+    """Launch quince from the notebook as a subprocess. Assumes quince exists in the same python environment.
+    If you are using virtual environments you may need to modify the shebang in run-quince.py or the python
+    interpreter in run-quince.bat to ensure that the quince is properly located and executed."""
+    if not meas_file:
+        meas_file = config.find_meas_file()
     if (os.name == 'nt'):
-        subprocess.Popen(['run-quince.bat', config.configFile], env=os.environ.copy())
+        subprocess.Popen(['run-quince.bat', meas_file], env=os.environ.copy())
     else:
-        subprocess.Popen(['run-quince.py', config.configFile], env=os.environ.copy())
+        subprocess.Popen(['run-quince.py', meas_file], env=os.environ.copy())
 
 class QubitExperiment(Experiment):
     """Experiment with a specialized run method for qubit experiments run via the QubitExpFactory."""
@@ -97,6 +102,12 @@ class QubitExperiment(Experiment):
                }}
         QubitExpFactory.load_parameter_sweeps(self, manual_sweep_params=desc)
 
+    def add_avg_sweep(self, num_averages):
+        param = IntParameter()
+        param.name = "sw_avg"
+        setattr(self, param.name, param)
+        self._parameters[param.name] = param
+        self.add_sweep(param, range(num_averages))
 
     def shutdown_instruments(self):
         # remove socket readers
@@ -141,17 +152,19 @@ class QubitExpFactory(object):
     will override some of the config values depending on the experiment being run."""
 
     @staticmethod
-    def run(meta_file=None, expname=None, calibration=False, save_data=True, cw_mode=False, repeats=None):
+    def run(meta_file=None, meas_file=None, expname=None, calibration=False, save_data=True,
+           cw_mode=False, repeats=None, single_plotter=True):
         """This passes all of the parameters given to the *create* method
         and then runs the experiment immediately."""
-        exp = QubitExpFactory.create(meta_file=meta_file, expname=expname,
-                                     calibration=calibration, save_data=save_data, cw_mode=cw_mode,
-                                    repeats=repeats)
+        exp = QubitExpFactory.create(meta_file=meta_file, meas_file=meas_file, expname=expname,
+                                     calibration=calibration, cw_mode=cw_mode, save_data=save_data,
+                                    repeats=repeats, single_plotter=single_plotter)
         exp.run_sweeps()
         return exp
 
     @staticmethod
-    def create(meta_file=None, expname=None, calibration=False, save_data = True, cw_mode=False, instr_filter = None, repeats=None):
+    def create(meta_file=None, meas_file=None, expname=None, calibration=False, save_data=True,
+               cw_mode=False, instr_filter=None, repeats=None, single_plotter=True):
         """Create the experiment, but do not run the sweeps. If *cw_mode* is specified
         the AWGs will be operated in continuous waveform mode, and will not be stopped
         and started between succesive sweep points. The *calibration* argument is used
@@ -162,10 +175,11 @@ class QubitExpFactory(object):
         to the data directory. If *repeats* is defined this will overide the
         number of segments gleaned from the meta_info"""
 
-        settings = config.yaml_load(config.configFile)
+        # Figure out which config file we should use, defaulting to the supplied argument
+        settings = config.load_meas_file(meas_file)
 
         # This is generally the behavior we want
-        auspex.globals.single_plotter_mode = True
+        auspex.config.single_plotter_mode = single_plotter
 
         # Instantiate and perform all of our setup
         experiment = QubitExperiment()
@@ -201,8 +215,8 @@ class QubitExpFactory(object):
             For example, a mixer with -40dBc sideband supression at 1 degree of phase skew
             and 0.1 dB amplitude imbalance should calibrate the phase first.
         """
-        spm = auspex.globals.single_plotter_mode
-        auspex.globals.single_plotter_mode = True
+        spm = auspex.config.single_plotter_mode
+        auspex.config.single_plotter_mode = True
 
         def sweep_offset(name, pts):
             mce.clear_sweeps()
@@ -237,7 +251,11 @@ class QubitExpFactory(object):
 
         sweep_offset("I_offset", offset_pts)
         I1_amps = np.array([x[1] for x in buff.get_data()])
-        I1_offset, xpts, ypts = find_null_offset(offset_pts[1:], I1_amps[1:])
+        try:
+            I1_offset, xpts, ypts = find_null_offset(offset_pts[1:], I1_amps[1:])
+        except:
+            mce.extra_plot_server.stop()
+            return
         plt["I-offset"] = (offset_pts, I1_amps)
         plt["Fit I-offset"] = (xpts, ypts)
         logger.info("Found first pass I offset of {}.".format(I1_offset))
@@ -246,7 +264,11 @@ class QubitExpFactory(object):
         mce.first_exp = False # slight misnomer to indicate that no new plot is needed
         sweep_offset("Q_offset", offset_pts)
         Q1_amps = np.array([x[1] for x in buff.get_data()])
-        Q1_offset, xpts, ypts = find_null_offset(offset_pts[1:], Q1_amps[1:])
+        try:
+            Q1_offset, xpts, ypts = find_null_offset(offset_pts[1:], Q1_amps[1:])
+        except:
+            mce.extra_plot_server.stop()
+            return
         plt["Q-offset"] = (offset_pts, Q1_amps)
         plt["Fit Q-offset"] = (xpts, ypts)
         logger.info("Found first pass Q offset of {}.".format(Q1_offset))
@@ -254,7 +276,11 @@ class QubitExpFactory(object):
 
         sweep_offset("I_offset", offset_pts)
         I2_amps = np.array([x[1] for x in buff.get_data()])
-        I2_offset, xpts, ypts = find_null_offset(offset_pts[1:], I2_amps[1:])
+        try:
+            I2_offset, xpts, ypts = find_null_offset(offset_pts[1:], I2_amps[1:])
+        except:
+            mce.extra_plot_server.stop()
+            return
         plt["I-offset"] = (offset_pts, I2_amps)
         plt["Fit I-offset"] = (xpts, ypts)
         logger.info("Found second pass I offset of {}.".format(I2_offset))
@@ -272,7 +298,11 @@ class QubitExpFactory(object):
 
         sweep_offset(cals[first_cal], cal_pts[first_cal])
         amps1 = np.array([x[1] for x in buff.get_data()])
-        offset1, xpts, ypts = find_null_offset(cal_pts[first_cal][1:], amps1[1:], default=cal_defaults[first_cal])
+        try:
+            offset1, xpts, ypts = find_null_offset(cal_pts[first_cal][1:], amps1[1:], default=cal_defaults[first_cal])
+        except:
+            mce.extra_plot_server.stop()
+            return
         plt2[cals[first_cal]] = (cal_pts[first_cal], amps1)
         plt2["Fit "+cals[first_cal]] = (xpts, ypts)
         logger.info("Found {} offset of {}.".format(first_cal, offset1))
@@ -296,7 +326,7 @@ class QubitExpFactory(object):
                                                                         mce.Q_offset.value,
                                                                         mce.amplitude_factor.value,
                                                                         mce.phase_skew.value))
-        auspex.globals.single_plotter_mode = spm
+        auspex.config.single_plotter_mode = spm
 
     @staticmethod
     def load_meta_info(experiment, meta_file):
@@ -384,10 +414,7 @@ class QubitExpFactory(object):
             # Enable the digitizer
             inst_to_enable.append(dig_name)
 
-            # Set number of segments in the digitizer
-            instruments[dig_name]['nbr_segments'] = num_segments
-
-            # Find the enabled Alazar stream selectors with the same channel as the receiver. Allow to plot/save raw/demod/int streams belonging to the same receiver
+            # Find the enabled X6 stream selectors with the same channel as the receiver. Allow to plot/save raw/demod/int streams belonging to the same receiver
             if calibration:
                 Alazar_stream_selectors = []
             else:
@@ -616,8 +643,8 @@ class QubitExpFactory(object):
         """Create parameter sweeps (non-segment sweeps) from the settings. Users can provide
         either a space-separated pair of *instr_name method_name* (i.e. *Holzworth1 power*)
         or specify a qubit property that auspex will try to link back to the relevant instrument.
-        (i.e. *q1 measure frequency* or *q2 control power*). Auspex will create a *SweepAxis*
-        for each parameter sweep, and add this axis to all output connectors."""
+        (i.e. *q1 measure frequency* or *q2 control amplitude 1*). Auspex will create a *SweepAxis*
+        for each parameter sweep, and add this axis to all output connectors. If a channel number (1 or 2) is specified, it only sets that channel in the pair"""
         if manual_sweep_params:
             sweeps = manual_sweep_params
             order = [list(sweeps.keys())[0]]
@@ -649,18 +676,23 @@ class QubitExpFactory(object):
                 target_info = par["target"].split()
                 if target_info[0] in experiment.qubits:
                     # We are sweeping a qubit, so we must lookup the instrument
-                    name, meas_or_control, prop = par["target"].split()
+                    target = par["target"].split()
+                    name, meas_or_control, prop = target[:3]
+                    if len(target) > 3:
+                        ch_ind = target[3]
                     qubit = qubits[name]
                     method_name = "set_{}".format(prop.lower())
 
                     # If sweeping frequency, we should allow for either mixed up signals or direct synthesis.
-                    # Sweeping power is always through the AWG channels.
+                    # Sweeping amplitude is always through the AWG channels.
                     if 'generator' in qubit[meas_or_control] and prop.lower() == "frequency":
                         name = qubit[meas_or_control]['generator']
                         instr = experiment._instruments[name]
                     else:
                         # Construct a function that sets a per-channel property
                         name, chan = qubit[meas_or_control]['AWG'].split()
+                        if len(target) > 3:
+                            chan = chan[int(ch_ind)-1]
                         instr = experiment._instruments[name]
 
                         def method(value, channel=chan, instr=instr, prop=prop.lower()):
@@ -775,7 +807,8 @@ class QubitExpFactory(object):
 
             # Digitizer mode preserves round_robins, averager mode collapsing along them:
             if 'acquire_mode' not in source_instr_settings.keys() or source_instr_settings['acquire_mode'] == 'digitizer':
-                descrip.add_axis(DataAxis("round_robins", range(source_instr_settings['nbr_round_robins'])))
+                if source_instr_settings['nbr_round_robins'] > 1:
+                    descrip.add_axis(DataAxis("round_robins", range(source_instr_settings['nbr_round_robins'])))
 
             oc.set_descriptor(descrip)
 
