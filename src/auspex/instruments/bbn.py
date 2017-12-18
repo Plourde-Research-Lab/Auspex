@@ -53,7 +53,8 @@ class DigitalAttenuator(SCPIInstrument):
     instrument_type = 'Attenuator'
 
     ch1attenuation = FloatCommand(get_string="GET 1", set_string="SET 1 {:.2f}")
-
+    ch2attenuation = FloatCommand(get_string="GET 2", set_string="SET 2 {:.2f}")
+    ch3attenuation = FloatCommand(get_string="GET 3", set_string="SET 3 {:.2f}")
     def __init__(self, resource_name=None, name='Unlabeled Digital Attenuator'):
         super(DigitalAttenuator, self).__init__(resource_name=resource_name,
             name=name)
