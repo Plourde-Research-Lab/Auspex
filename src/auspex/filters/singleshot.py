@@ -84,15 +84,29 @@ class SingleShotMeasurement(Filter):
 
     async def process_data(self, data):
         """Fill the ground and excited data bins"""
-        if self.counter % 2 != 0:
-            N = (self.counter + 1) // 2 - 1
-            self.ground_data[:,N] = data
+
+        if len(data) == self.record_length:
+            if self.counter % 2 != 0:
+                N = (self.counter + 1) // 2 - 1
+                self.ground_data[:,N] = data
+            else:
+                N = self.counter // 2 - 1
+                self.excited_data[:,N] = data
+            self.counter += 1
+            if self.counter > self.num_segments:
+                self.counter = 1
+                self.compute_filter()
+                if self.logistic_regression.value:
+                    self.logistic_fidelity()
+                if self.save_kernel.value:
+                    self._save_kernel()
+                for os in self.fidelity.output_streams:
+                    await os.push(self.fidelity_result)
+
         else:
-            N = self.counter // 2 - 1
-            self.excited_data[:,N] = data
-        self.counter += 1
-        if self.counter > self.num_segments:
-            self.counter = 1
+            data = np.reshape(data, [self.record_length, self.num_segments])
+            self.ground_data = data[0::2]
+            self.excited_data = data[1::2]
             self.compute_filter()
             if self.logistic_regression.value:
                 self.logistic_fidelity()
@@ -100,6 +114,8 @@ class SingleShotMeasurement(Filter):
                 self._save_kernel()
             for os in self.fidelity.output_streams:
                 await os.push(self.fidelity_result)
+
+
 
     def compute_filter(self):
         """Compute the single shot kernel and obtain single-shot measurement

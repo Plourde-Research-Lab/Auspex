@@ -34,7 +34,6 @@ from auspex.filters.plot import Plotter, ManualPlotter
 from auspex.instruments.instrument import Instrument, SCPIInstrument, CLibInstrument, DigitizerChannel
 from auspex.stream import OutputConnector, DataStreamDescriptor, DataAxis
 from auspex.experiment import FloatParameter
-from auspex.instruments.X6 import X6Channel
 from auspex.instruments.alazar import AlazarChannel
 from auspex.mixer_calibration import MixerCalibrationExperiment, find_null_offset
 
@@ -352,26 +351,15 @@ class QubitExpFactory(object):
             if len(receivers) > 1:
                 raise NotImplementedError("Single shot fidelity for more than one qubit is not yet implemented.")
             stream_sel_name_orig = receivers[0][0].replace('RecvChan-', '')
-            X6_stream_selectors = [k for k,v in filters.items() if v["type"] == 'X6StreamSelector' and v["source"] == filters[stream_sel_name_orig]['source'] and v['channel'] == filters[stream_sel_name_orig]['channel']]
-            for s in X6_stream_selectors:
-                if filters[s]['stream_type'] == experiment.ss_stream_type:
-                    filters[s]['enabled'] = True
-                    stream_sel_name = s
-                else:
-                    filters[s]['enabled'] = False
-
-            # Implement Alazar as well
-            Alazar_stream_selectors = [k for k,v in filters.items() if v["type"] == "AlazarStreamSelector" and v["source"] == filters[stream_sel_name_orig]['source'] and v['channel'] == filters[stream_sel_name_orig]['channel']]
+            Alazar_stream_selectors = [k for k,v in filters.items() if v["type"] == 'AlazarStreamSelector' and v["source"] == filters[stream_sel_name_orig]['source'] and v['channel'] == filters[stream_sel_name_orig]['channel']]
             for s in Alazar_stream_selectors:
                 if filters[s]['stream_type'] == experiment.ss_stream_type:
                     filters[s]['enabled'] = True
                     stream_sel_name = s
                 else:
                     filters[s]['enabled'] = False
-
         edges = [[(s, k) for s in strip_conn_name(v["source"])] for k,v in filters.items() if ("enabled" not in v.keys()) or v["enabled"]]
         edges = [e for edge in edges for e in edge]
-
         dag = nx.DiGraph()
         dag.add_edges_from(edges)
 
@@ -399,7 +387,7 @@ class QubitExpFactory(object):
             # Set number of segments in the digitizer
             instruments[dig_name]['nbr_segments'] = num_segments
 
-            # Find the enabled X6 stream selectors with the same channel as the receiver. Allow to plot/save raw/demod/int streams belonging to the same receiver
+            # Find the enabled Alazar stream selectors with the same channel as the receiver. Allow to plot/save raw/demod/int streams belonging to the same receiver
             if calibration:
                 Alazar_stream_selectors = []
             else:
@@ -741,7 +729,7 @@ class QubitExpFactory(object):
         # Get the enabled measurements, or those which aren't explicitly
         enabled_meas = {k: v for k, v in experiment.settings['filters'].items() if 'enabled' not in v or v['enabled'] }
 
-        # First look for digitizer streams (Alazar or X6)
+        # First look for digitizer streams (Alazar or Alazar)
         dig_settings = {k: v for k, v in enabled_meas.items() if "StreamSelector" in v['type']}
 
         # These stream selectors are really just a convenience
