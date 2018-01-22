@@ -6,7 +6,7 @@
 #
 #    http://www.apache.org/licenses/LICENSE-2.0
 
-__all__ = ['DPO72004C']
+__all__ = ['DPO72004C', 'PPG4001']
 
 from auspex.log import logger
 from .instrument import SCPIInstrument, StringCommand, FloatCommand, IntCommand
@@ -81,3 +81,66 @@ class DPO72004C(SCPIInstrument):
 
     def get_math_curve(self, channel=1):
         pass
+
+
+class PPG4001(SCPIInstrument):
+    """Tektronix PPG4001 Pattern Generator"""
+    
+    amplitude      = FloatCommand(get_string=":VOLTage:POS?;",
+                                  set_string=":VOLTage:POS {:.3f};")
+    
+    offset         = FloatCommand(get_string=":VOLTage:OFFSet?;",
+                                  set_string=":VOLTage:OFFSet {:.3f};")
+    
+    polarity       = StringCommand(get_string=":OUTPut1:POLarity?",
+                                   set_string=":OUTPut1:POLarity {:s}",
+                                   allowed_values=['NORM', 'INV'])
+    
+    pattern_length = IntCommand(get_string=":DIG:PATT:LENG?;", 
+                                set_string=":DIG:PATT:LENG {:d};")
+    
+    pattern_rate   = FloatCommand(get_string=":FREQ", set_string=":FREQ {:.5f}")
+    
+    
+    
+    def __init__(self, resource_name, *args, **kwargs):
+        super(PPG4001, self).__init__(resource_name, *args, **kwargs)
+        self.name = "Tektronix PPG4001 Pattern Generator"
+        self.interface._resource.read_termination = u"\n"   
+        
+        
+    def dataStr(self, pulse,loc=1):
+        '''Generate command string for pulse pattern'''
+        length = len(pulse)
+        return ':DIG1:PATT:DATA {:d},{:d},#{:d}{:d}{:s}'.format(
+            loc,
+            length,
+            len(str(length)),
+            length,
+            "".join([str(int(x)) for x in pulse])
+        )
+    
+    def load_pattern(self, pattern):
+        '''Write pulse to PPG in 1024 bit blocks'''
+        q,r = divmod(len(pattern),1024)
+        for i in np.arange(q):
+            self.interface.write(self.dataStr(pulse[(1024*i):1024*(i+1)], 
+                                              loc=int(1024*i)+1))
+        self.interface.write(self.dataStr(pulse[-1*r:], 
+                                          loc=1024*q))
+        
+    def dataQuery(self, numBits, loc):
+        '''Parse pulse pattern query'''
+        res = self.interface.query(':DIG:PATT:DATA? {:d},{:d}'
+                                   .format(loc, numBits)).strip()
+        bits = res[int(res[1])+2:]
+        return bits
+    
+    def read_pattern(self, numBits):
+        '''Read pulse from PPG in 1024 bit blocks'''
+        q,r = divmod(numBits,1024)
+        ret = ""
+        for i in np.arange(q):
+            ret += self.dataQuery(1024, loc=int(1024*i)+1)
+        ret += self.dataQuery(r, loc=1024*q)
+        return ret
