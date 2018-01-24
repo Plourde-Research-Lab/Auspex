@@ -21,8 +21,7 @@ class HittiteHMCT2100(SCPIInstrument):
     frequency = FloatCommand(scpi_string="freq")
     power     = FloatCommand(scpi_string="power")
     phase     = FloatCommand(scpi_string="phase")
-
-    output    = StringCommand(scpi_string="output", value_map={True: 'on', False: 'off'})
+    output    = StringCommand(scpi_string="output", value_map={True: '0', False: '1'})
 
     def __init__(self, resource_name=None, *args, **kwargs):
         #If we only have an IP address then tack on the raw socket port to the VISA resource string
@@ -35,8 +34,8 @@ class HittiteHMCT2100(SCPIInstrument):
             if "::5025::SOCKET" not in self.resource_name:
                 self.resource_name += "::5025::SOCKET"
         print(self.resource_name)
-        super(HMCT2100, self).connect(resource_name=resource_name, interface_type=interface_type)
-        self.interface._resource.read_termination = u"\n"
+        super(HittiteHMCT2100, self).connect(resource_name=resource_name, interface_type=interface_type)
+        self.interface._resource.read_termination = u"\r\n"
         self.interface._resource.write_termination = u"\n"
         self.interface._resource.timeout = 3000 #seem to have trouble timing out on first query sometimes
 
