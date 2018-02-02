@@ -6,7 +6,7 @@
 #
 #    http://www.apache.org/licenses/LICENSE-2.0
 
-__all__ = ['Agilent33220A', 'Agilent34970A', 'AgilentE8363C', 'AgilentN5183A', 'AgilentE8257D', 'AgilentE9010A']
+__all__ = ['Agilent33220A', 'Agilent34970A', 'AgilentE8363C', 'AgilentN5183A', 'AgilentE9010A']
 
 import socket
 import time
@@ -86,10 +86,10 @@ class Agilent33220A(SCPIInstrument):
 class Agilent34970A(SCPIInstrument):
     """Agilent 34970A MUX"""
 
-    # Array of Channels to configure
+# Array of Channels to configure
     CONFIG_LIST     = []
 
-    # Allowed value arrays
+# Allowed value arrays
 
     RES_VALUES      = ['AUTO',1E2, 1E3, 1E4, 1E5, 1E6, 1E7, 1E8]
     PLC_VALUES      = [0.02, 0.2, 1, 10, 20, 100, 200]
@@ -97,13 +97,13 @@ class Agilent34970A(SCPIInstrument):
     TRIGSOUR_VALUES = ['BUS','IMM','EXT','TIM']
     ADVSOUR_VALUES  = ['EXT','BUS','IMM']
 
-    # Commands needed to configure MUX for measurement with an external instrument
+# Commands needed to configure MUX for measurement with an external instrument
 
     dmm            = StringCommand(scpi_string="INST:DMM",value_map={'ON': '1', 'OFF': '0'})
     trigger_source = StringCommand(scpi_string="TRIG:SOUR",allowed_values=TRIGSOUR_VALUES)
     advance_source = StringCommand(scpi_string="ROUT:CHAN:ADV:SOUR",allowed_values=ADVSOUR_VALUES)
 
-    # Generic init and connect methods
+# Generic init and connect methods
 
     def __init__(self, resource_name=None, *args, **kwargs):
         super(Agilent34970A, self).__init__(resource_name, *args, **kwargs)
@@ -115,12 +115,12 @@ class Agilent34970A(SCPIInstrument):
         super(Agilent34970A, self).connect(resource_name=self.resource_name, interface_type=interface_type)
         self.interface._resource.read_termination = u"\n"
 
-    #Channel to String helper function converts int array to channel list string
+#Channel to String helper function converts int array to channel list string
 
     def ch_to_str(self, ch_list):
         return ("(@"+','.join(['{:d}']*len(ch_list))+")").format(*ch_list)
 
-    #Helper function to sort channels by resistance measurement type
+#Helper function to sort channels by resistance measurement type
 
     def r_lists(self):
         fres_list, res_list = [], []
@@ -134,7 +134,7 @@ class Agilent34970A(SCPIInstrument):
 
         return fres_list, res_list
 
-    #Setup Scan List
+#Setup Scan List
 
     @property
     def scanlist(self):
@@ -145,7 +145,7 @@ class Agilent34970A(SCPIInstrument):
     def scanlist(self, ch_list):
         self.interface.write("ROUT:SCAN "+self.ch_to_str(ch_list))
 
-    #Setup Config List
+#Setup Config List
 
     @property
     def configlist(self):
@@ -155,18 +155,18 @@ class Agilent34970A(SCPIInstrument):
     def configlist(self, ch_list):
         self.CONFIG_LIST = ch_list
 
-    #Start Scan
+#Start Scan
     def scan(self):
         self.interface.write("INIT")
 
-    #Read Values
+#Read Values
     def read(self):
         if self.dmm=="ON":
             return self.interface.query_ascii_values("FETC?", converter=u'e')
         else:
             raise Exception("Cannot issue command when DMM is disabled. Enable DMM")
 
-    # Commands that configure resistance measurement type, 2 or 4 wire
+# Commands that configure resistance measurement type, 2 or 4 wire
 
     @property
     def resistance_wire(self):
@@ -187,7 +187,7 @@ class Agilent34970A(SCPIInstrument):
             fw_char = "ON," if fw == 4 else "OFF,"
             self.interface.write(("ROUT:CHAN:FWIR {}"+self.ch_to_str(self.CONFIG_LIST)).format(fw_char))
 
-    # Commands that configure resistance measurements with internal DMM
+# Commands that configure resistance measurements with internal DMM
 
     @property
     def resistance_range(self):
@@ -318,38 +318,6 @@ class AgilentN5183A(SCPIInstrument):
 
     def set_all(self, settings):
         super(AgilentN5183A, self).set_all(settings)
-
-class AgilentE8257D(SCPIInstrument):
-    """AgilentE8257D microwave source"""
-    instrument_type = "Microwave Source"
-
-    frequency = FloatCommand(scpi_string=":freq")
-    power     = FloatCommand(scpi_string=":power")
-    phase     = FloatCommand(scpi_string=":phase")
-
-    alc       = StringCommand(scpi_string=":power:alc", value_map={True: '1', False: '0'})
-    mod       = StringCommand(scpi_string=":output:mod", value_map={True: '1', False: '0'})
-
-    output    = StringCommand(scpi_string=":output", value_map={True: '1', False: '0'})
-
-    def __init__(self, resource_name=None, *args, **kwargs):
-        #If we only have an IP address then tack on the raw socket port to the VISA resource string
-        super(AgilentE8257D, self).__init__(resource_name, *args, **kwargs)
-
-    def connect(self, resource_name=None, interface_type="VISA"):
-        if resource_name is not None:
-            self.resource_name = resource_name
-        if is_valid_ipv4(self.resource_name):
-            if "::5025::SOCKET" not in self.resource_name:
-                self.resource_name += "::5025::SOCKET"
-        print(self.resource_name)
-        super(AgilentE8257D, self).connect(resource_name=resource_name, interface_type=interface_type)
-        self.interface._resource.read_termination = u"\n"
-        self.interface._resource.write_termination = u"\n"
-        self.interface._resource.timeout = 3000 #seem to have trouble timing out on first query sometimes
-
-    def set_all(self, settings):
-        super(AgilentE8257D, self).set_all(settings)
 
 class AgilentE8363C(SCPIInstrument):
     """Agilent E8363C VNA"""

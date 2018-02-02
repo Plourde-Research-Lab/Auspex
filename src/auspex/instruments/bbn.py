@@ -8,7 +8,7 @@
 
 __all__ = ['APS', 'APS2', 'DigitalAttenuator', 'SpectrumAnalyzer']
 
-from .instrument import Instrument, SCPIInstrument, VisaInterface, MetaInstrument, FloatCommand
+from .instrument import Instrument, SCPIInstrument, VisaInterface, MetaInstrument
 from auspex.log import logger
 import auspex.config as config
 from types import MethodType
@@ -23,9 +23,7 @@ from copy import deepcopy
 aps2_missing = False
 if config.auspex_dummy_mode:
     fake_aps2 = True
-    fake_aps1 = True
     aps2 = MagicMock()
-
 else:
     try:
         import aps2
@@ -56,9 +54,6 @@ class DigitalAttenuator(SCPIInstrument):
     NUM_CHANNELS = 3
     instrument_type = 'Attenuator'
 
-    ch1attenuation = FloatCommand(get_string="GET 1", set_string="SET 1 {:.2f}")
-    ch2attenuation = FloatCommand(get_string="GET 2", set_string="SET 2 {:.2f}")
-    ch3attenuation = FloatCommand(get_string="GET 3", set_string="SET 3 {:.2f}")
     def __init__(self, resource_name=None, name='Unlabeled Digital Attenuator'):
         super(DigitalAttenuator, self).__init__(resource_name=resource_name,
             name=name)
