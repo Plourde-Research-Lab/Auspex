@@ -13,7 +13,6 @@ from auspex.log import logger
 
 from types import MethodType
 from unittest.mock import MagicMock
-import auspex.globals
 from time import sleep
 from visa import VisaIOError
 import numpy as np
