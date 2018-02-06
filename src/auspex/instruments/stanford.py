@@ -270,9 +270,9 @@ class SIM928(SCPIInstrument):
     @property
     def ch1_voltage(self):
         self.interface.write('SNDT 1,"VOLT?"')
-        self.interface.query('GETN? 1,80')
-        value = self.interface.read()
-        return float(value.strip())
+        value = self.interface.query('GETN? 1,80')
+        # print(value)
+        return float(value.strip()[5:])
 
     @ch1_voltage.setter
     def ch1_voltage(self, value):
@@ -280,8 +280,31 @@ class SIM928(SCPIInstrument):
             raise ValueError("SIM can only go from -20 to +20 V")
         self.interface.write('SNDT 1,"VOLT {:f}"'.format(value))
 
-    def get_ch1_voltage(self):
-        return self.ch1_voltage
-
     def set_ch1_voltage(self, value):
         self.ch1_voltage = value
+
+    @property
+    def ch2_voltage(self):
+        self.interface.write('SNDT 2,"VOLT?"')
+        value = self.interface.query('GETN? 2,80')
+        # print(value)
+        return float(value.strip()[5:])
+
+    @ch1_voltage.setter
+    def ch2_voltage(self, value):
+        if abs(value) > 20.0:
+            raise ValueError("SIM can only go from -20 to +20 V")
+        self.interface.write('SNDT 2,"VOLT {:f}"'.format(value))
+
+    @property
+    def ch3_voltage(self):
+        self.interface.write('SNDT 3,"VOLT?"')
+        value = self.interface.query('GETN? 3,80')
+        # print(value)
+        return float(value.strip()[5:])
+
+    @ch1_voltage.setter
+    def ch3_voltage(self, value):
+        if abs(value) > 20.0:
+            raise ValueError("SIM can only go from -20 to +20 V")
+        self.interface.write('SNDT 3,"VOLT {:f}"'.format(value))
